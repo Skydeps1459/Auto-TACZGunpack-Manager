@@ -1,31 +1,40 @@
-# Gradle
-.gradle/
+### Gradle ###
+.gradle
 build/
 !gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-!**/src/test/**/build/
+!**/src/**/build/
 
-# 编辑器 / IDE（项目采用 CLI 工作流，不加 IDE 配置）
+### IntelliJ IDEA ###
 .idea/
-*.iml
 *.iws
+*.iml
 *.ipr
 out/
-.vscode/
+!**/src/**/out/
+
+.run/
+
+### Eclipse ###
+.apt_generated
 .classpath
+.eclipse/
+.factorypath
 .project
-.settings/
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/**/bin/
 
-# NeoForge / Minecraft 运行产物
-run/
-runs/
-src/generated/resources/.cache/
+### VS Code ###
+.vscode/
 
-# 系统
-Thumbs.db
+### Mac OS ###
 .DS_Store
-*.log
 
-# Java
-hs_err_pid*
-replay_pid*
+### Minecraft Modding ###
+run/
+!**/src/**/run/
+**/src/generated/**/.cache/
+repo/
+!**/src/**/repo/
