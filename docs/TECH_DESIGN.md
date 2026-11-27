@@ -60,6 +60,18 @@ TaCZ 默认扫描 `.minecraft/tacz/` 下的 `.zip` 压缩包和未解压文件�
 
 ---
 
+### 5. 枪包更新检测与 GitHub 镜像加速（v1.0.3 新增）
+
+* **更新检测（`GunpackUpdateChecker`）**：
+  * 游戏启动进入主菜单时后台执行一次（或在管理界面手动点击「检查更新」），收集本地 `.zip` 枪包的 SHA-256 摘要。
+  * 调用 Modrinth `POST /v2/version_files` 批量匹配所属 `project_id`，再拉取最新兼容 `.zip` 版本，对比版本 ID 与哈希。
+  * 若存在更新，在主菜单/暂停菜单按钮上高亮显示更新数量，并在本地列表条目标注 `[可更新 -> 版本号]`，支持「一键更新」自动下载替换并清理旧包后重载 TaCZ。
+* **GitHub 镜像与构建**：
+  * 支持检索 `topic:tacz` 仓库与 Release `.zip` 资产，内置 `ghfast.top`、`gh-proxy.com`、`ghproxy.net` 加速节点切换。
+  * **1.20.1 Forge**（Java 17）与 **1.21.1 NeoForge**（Java 21）双端同步维护，编译命令：`./gradlew build`。
+
+---
+
 ## 三、 工程包结构规划
 
 ```text
