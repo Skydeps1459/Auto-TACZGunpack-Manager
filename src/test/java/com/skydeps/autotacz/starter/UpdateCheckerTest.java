@@ -1,6 +1,7 @@
 package com.skydeps.autotacz.starter;
 
 import com.skydeps.autotacz.config.StarterConfig;
+import com.skydeps.autotacz.remote.HttpFetcher;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -35,12 +36,25 @@ class UpdateCheckerTest {
      */
     private static final String DEAD_URL = "http://127.0.0.1:1/packs.json";
 
+    /**
+     * 构造一个<b>完全隔离网络</b>的检查器：只访问主地址，不走备用地址。
+     *
+     * <p>这一点必须显式指定。默认构造会带上
+     * {@link com.skydeps.autotacz.config.StarterConfig#FALLBACK_MANIFESTS}
+     * 里的真实 CDN 地址，在能联网的 CI 上，主地址失败后会真的连上备用地址并成功，
+     * 于是测出来是 {@code DONE}——测试就失去了验证「网络异常」的能力。
+     * 这个坑实际踩过：本地因为代理原因全部失败而通过，CI 上一片红。
+     */
+    private static UpdateChecker isolated(StarterConfig config, Path taczRoot) {
+        return new UpdateChecker(config, taczRoot, HttpFetcher::new, List.of());
+    }
+
     @Test
     @DisplayName("tacz 目录不存在时检查正常结束，不报异常")
     void missingTaczRootFinishesGracefully(@TempDir Path gameDir) {
         StarterConfig config = new StarterConfig(
                 true, DEAD_URL, List.of("mw4"), 3, true);
-        UpdateChecker checker = new UpdateChecker(config, gameDir.resolve("tacz"));
+        UpdateChecker checker = isolated(config, gameDir.resolve("tacz"));
 
         checker.run();
 
@@ -56,7 +70,7 @@ class UpdateCheckerTest {
         writePack(gameDir.resolve("tacz").resolve("mw4-pack"), "mw4_core", "MW4 核心包", "1.0.0");
 
         StarterConfig config = new StarterConfig(true, DEAD_URL, List.of("mw4"), 2, true);
-        UpdateChecker checker = new UpdateChecker(config, gameDir.resolve("tacz"));
+        UpdateChecker checker = isolated(config, gameDir.resolve("tacz"));
 
         checker.run();
 
@@ -76,7 +90,7 @@ class UpdateCheckerTest {
         writePack(gameDir.resolve("tacz").resolve("mw4-pack"), "mw4_core", "MW4 核心包", "1.0.0");
 
         StarterConfig config = new StarterConfig(true, "not-a-url", List.of("mw4"), 2, true);
-        UpdateChecker checker = new UpdateChecker(config, gameDir.resolve("tacz"));
+        UpdateChecker checker = isolated(config, gameDir.resolve("tacz"));
 
         checker.run();
 
@@ -92,7 +106,7 @@ class UpdateCheckerTest {
         writePack(tacz.resolve("other-pack"), "bocw_pack", "BOCW 包", "2.0.0");
 
         StarterConfig config = new StarterConfig(true, DEAD_URL, List.of("mw4"), 2, true);
-        UpdateChecker checker = new UpdateChecker(config, tacz);
+        UpdateChecker checker = isolated(config, tacz);
 
         checker.run();
 

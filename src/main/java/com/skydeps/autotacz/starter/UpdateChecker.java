@@ -51,20 +51,43 @@ public final class UpdateChecker {
      */
     private final Function<Duration, HttpFetcher> fetcherFactory;
 
+    /**
+     * 主地址失败后依次尝试的备用清单地址。
+     *
+     * <p>做成实例字段而非直接读常量，是为了让测试能传空列表把网络完全隔离——
+     * 否则「主地址不可达」的用例会在能联网的 CI 上真的连到备用地址，
+     * 测出来是 {@code DONE} 而不是期望的 {@code NETWORK_ERROR}。
+     */
+    private final List<String> fallbackManifests;
+
     private volatile Status status = Status.IDLE;
     private volatile String message = "";
     private volatile List<Candidate> candidates = List.of();
     private volatile int scannedPacks;
     private volatile boolean skipped;
 
+    /** 使用 {@link StarterConfig#FALLBACK_MANIFESTS} 作为备用地址。 */
     public UpdateChecker(StarterConfig config, Path taczRoot) {
-        this(config, taczRoot, HttpFetcher::new);
+        this(config, taczRoot, HttpFetcher::new, StarterConfig.FALLBACK_MANIFESTS);
     }
 
     public UpdateChecker(StarterConfig config, Path taczRoot, Function<Duration, HttpFetcher> fetcherFactory) {
+        this(config, taczRoot, fetcherFactory, StarterConfig.FALLBACK_MANIFESTS);
+    }
+
+    /**
+     * 完整构造。
+     *
+     * @param fallbackManifests 备用清单地址；传空列表表示只用主地址（测试用）
+     */
+    public UpdateChecker(StarterConfig config,
+                         Path taczRoot,
+                         Function<Duration, HttpFetcher> fetcherFactory,
+                         List<String> fallbackManifests) {
         this.config = config;
         this.taczRoot = taczRoot;
         this.fetcherFactory = fetcherFactory;
+        this.fallbackManifests = fallbackManifests == null ? List.of() : List.copyOf(fallbackManifests);
     }
 
     /**
@@ -202,11 +225,15 @@ public final class UpdateChecker {
      * <p>单点地址不可达在国内网络下很常见（CDN 被墙、IP 被阻断），
      * 多试一个地址就能避免把「换个域名就能好」的情况误报成网络异常。
      * 全部失败才抛 {@link NetworkFailure}，让界面提供跳过选项。
+     *
+     * <p>备用地址来自构造参数 {@code fallbackManifests}，
+     * 不在方法内硬编码——否则测试无法隔离网络，会把「真连上了备用地址」
+     * 误判成逻辑错误。
      */
     private List<RemotePack> loadManifestWithFallback() throws IOException {
         List<String> urls = new ArrayList<>();
         urls.add(config.manifestUrl());
-        for (String fallback : StarterConfig.FALLBACK_MANIFESTS) {
+        for (String fallback : fallbackManifests) {
             if (!urls.contains(fallback)) {
                 urls.add(fallback);
             }
