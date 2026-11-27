@@ -2,6 +2,8 @@ package com.liokasanovich.gun_management.client;
 
 import com.liokasanovich.gun_management.GunManagement;
 import com.liokasanovich.gun_management.client.gui.GunpackManagerScreen;
+import com.liokasanovich.gun_management.core.GunpackUpdateChecker;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.PauseScreen;
@@ -24,14 +26,23 @@ public final class ClientEvents {
     @SubscribeEvent
     public static void onScreenInitPost(ScreenEvent.Init.Post event) {
         Screen screen = event.getScreen();
+        if (screen instanceof TitleScreen) {
+            GunpackUpdateChecker.checkOnceOnStartupAsync();
+        }
         if (screen instanceof TitleScreen || screen instanceof PauseScreen) {
-            int width = 104;
+            int updateCount = GunpackUpdateChecker.getUpdateCount();
+            int width = updateCount > 0 ? 128 : 104;
             int height = 20;
             int x = screen.width - width - 8;
             int y = screen.height - height - 24;
 
+            Component label = updateCount > 0
+                    ? Component.translatable("gui.gun_management.menu_button_updates", updateCount)
+                            .withStyle(ChatFormatting.GOLD)
+                    : Component.translatable("gui.gun_management.menu_button");
+
             event.addListener(Button.builder(
-                            Component.translatable("gui.gun_management.menu_button"),
+                            label,
                             btn -> Minecraft.getInstance().setScreen(new GunpackManagerScreen(screen)))
                     .bounds(x, y, width, height)
                     .build());

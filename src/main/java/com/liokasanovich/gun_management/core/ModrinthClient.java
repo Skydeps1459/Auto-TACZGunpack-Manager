@@ -38,7 +38,7 @@ import java.util.concurrent.Executors;
 public final class ModrinthClient {
     private static final Logger LOGGER = LoggerFactory.getLogger(ModrinthClient.class);
     private static final String API_BASE = "https://api.modrinth.com/v2";
-    private static final String USER_AGENT = "GunManagement/0.1.0 (Minecraft 1.20.1 Forge)";
+    private static final String USER_AGENT = "GunManagement/1.0.3 (Minecraft 1.20.1 Forge)";
     private static final Gson GSON = new Gson();
 
     private static final ExecutorService IO_EXECUTOR = Executors.newFixedThreadPool(4, r -> {
@@ -259,6 +259,10 @@ public final class ModrinthClient {
         if (cached != null) {
             return CompletableFuture.completedFuture(cached);
         }
+        return fetchLatestZipVersionFreshAsync(projectId);
+    }
+
+    public static CompletableFuture<Optional<ModrinthVersion>> fetchLatestZipVersionFreshAsync(String projectId) {
         String encodedGameVersions = URLEncoder.encode("[\"1.20.1\"]", StandardCharsets.UTF_8);
         String preferredUrl = API_BASE + "/project/" + URLEncoder.encode(projectId, StandardCharsets.UTF_8)
                 + "/version?game_versions=" + encodedGameVersions;
@@ -275,6 +279,49 @@ public final class ModrinthClient {
                 return fallbackOpt;
             });
         });
+    }
+
+    public static CompletableFuture<Map<String, ModrinthVersion>> lookupVersionsBySha256BatchAsync(List<String> hashes) {
+        if (hashes == null || hashes.isEmpty()) {
+            return CompletableFuture.completedFuture(Map.of());
+        }
+        JsonObject body = new JsonObject();
+        JsonArray arr = new JsonArray();
+        for (String h : hashes) {
+            if (h != null && !h.isBlank()) {
+                arr.add(h.toLowerCase(Locale.ROOT));
+            }
+        }
+        if (arr.isEmpty()) {
+            return CompletableFuture.completedFuture(Map.of());
+        }
+        body.add("hashes", arr);
+        body.addProperty("algorithm", "sha256");
+
+        HttpRequest request = HttpRequest.newBuilder(URI.create(API_BASE + "/version_files"))
+                .header("User-Agent", USER_AGENT)
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(20))
+                .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body), StandardCharsets.UTF_8))
+                .build();
+
+        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+                .thenApply(resp -> {
+                    if (resp.statusCode() != 200) {
+                        throw new RuntimeException("Modrinth batch hash lookup failed with HTTP " + resp.statusCode());
+                    }
+                    JsonObject root = GSON.fromJson(resp.body(), JsonObject.class);
+                    Map<String, ModrinthVersion> result = new java.util.LinkedHashMap<>();
+                    if (root != null) {
+                        for (Map.Entry<String, JsonElement> entry : root.entrySet()) {
+                            if (entry.getValue().isJsonObject()) {
+                                parseVersionObject(entry.getValue().getAsJsonObject())
+                                        .ifPresent(v -> result.put(entry.getKey().toLowerCase(Locale.ROOT), v));
+                            }
+                        }
+                    }
+                    return result;
+                });
     }
 
     private static CompletableFuture<Optional<ModrinthVersion>> fetchFirstZipVersion(String url) {
@@ -332,13 +379,23 @@ public final class ModrinthClient {
             Path taczDir,
             @Nullable ProgressListener progressListener
     ) {
+        return downloadAndInstallAsync(version, taczDir, taczDir, progressListener);
+    }
+
+    public static CompletableFuture<Path> downloadAndInstallAsync(
+            ModrinthVersion version,
+            Path taczDir,
+            Path installDir,
+            @Nullable ProgressListener progressListener
+    ) {
         return CompletableFuture.supplyAsync(() -> {
             Path tmpDir = taczDir.resolve(GunpackPaths.TMP_DIR_NAME);
             Path partFile = tmpDir.resolve(version.fileName() + ".part");
-            Path finalFile = taczDir.resolve(version.fileName());
+            Path finalFile = installDir.resolve(version.fileName());
 
             try {
                 GunpackPaths.ensureDirectories(taczDir);
+                Files.createDirectories(installDir);
                 Files.createDirectories(tmpDir);
 
                 HttpRequest request = HttpRequest.newBuilder(URI.create(version.downloadUrl()))

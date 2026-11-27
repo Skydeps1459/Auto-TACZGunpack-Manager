@@ -12,6 +12,7 @@
   "gun_management.configuration.magicNumber": "Magic Number",
 
   "gui.gun_management.menu_button": "Gunpacks",
+  "gui.gun_management.menu_button_updates": "Gunpacks (%s updates)",
   "gui.gun_management.title": "TaCZ Gunpack Manager",
   "gui.gun_management.tab.local": "Local Packs",
   "gui.gun_management.tab.online": "Online Browser",
@@ -53,5 +54,15 @@
   "gui.gun_management.sync.installed_count": "Installed %s of %s pack(s) and reloaded TaCZ.",
   "gui.gun_management.sync.none_found": "No matching packs were found on Modrinth by SHA-256.",
   "gui.gun_management.sync.mismatch": "Hash Mismatch",
-  "gui.gun_management.sync.missing": "Missing"
+  "gui.gun_management.sync.missing": "Missing",
+
+  "gui.gun_management.check_updates": "Check Updates",
+  "gui.gun_management.update_all": "Update All (%s)",
+  "gui.gun_management.checking_updates": "Checking Modrinth for gunpack updates...",
+  "gui.gun_management.updates_available": "%s gunpack update(s) available. Click Update All.",
+  "gui.gun_management.up_to_date": "All recognized Modrinth gunpacks are up to date.",
+  "gui.gun_management.update_in_world_blocked": "Updating enabled gunpacks is disabled in-world. Return to the main menu first.",
+  "gui.gun_management.updated_count": "Updated %s gunpack(s). Reloading TaCZ...",
+  "gui.gun_management.update_badge": "[Update -> %s]",
+  "gui.gun_management.update_tooltip": "Update available: %s -> %s"
 }

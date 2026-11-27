@@ -2,6 +2,7 @@ package com.liokasanovich.gun_management.client.gui.widget;
 
 import com.liokasanovich.gun_management.client.texture.PackIconCache;
 import com.liokasanovich.gun_management.core.GunpackInfo;
+import com.liokasanovich.gun_management.core.GunpackUpdateChecker;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -107,8 +108,14 @@ public class GunpackListWidget extends ObjectSelectionList<GunpackListWidget.Ent
                     pack.version(), pack.gunCount(), pack.ammoCount(), pack.attachmentCount());
             graphics.drawString(font, font.plainSubstrByWidth(meta, maxTextWidth), textX, top + 14, 0xAAAAAA, false);
 
+            GunpackUpdateChecker.PackUpdate update = GunpackUpdateChecker.getUpdateFor(pack);
             if (pack.pendingRestart()) {
                 Component badge = Component.translatable("gui.gun_management.pending_restart")
+                        .withStyle(ChatFormatting.GOLD);
+                graphics.drawString(font, badge, textX, top + 24, 0xFFAA00, false);
+            } else if (update != null) {
+                Component badge = Component.translatable("gui.gun_management.update_badge",
+                                update.latestVersion().versionNumber())
                         .withStyle(ChatFormatting.GOLD);
                 graphics.drawString(font, badge, textX, top + 24, 0xFFAA00, false);
             } else if (!pack.authors().isEmpty()) {
@@ -166,6 +173,12 @@ public class GunpackListWidget extends ObjectSelectionList<GunpackListWidget.Ent
         if (!info.sha256().isBlank()) {
             String shortHash = info.sha256().substring(0, Math.min(12, info.sha256().length()));
             lines.add(Component.literal("SHA-256: " + shortHash + "...").withStyle(ChatFormatting.DARK_GRAY));
+        }
+        GunpackUpdateChecker.PackUpdate update = GunpackUpdateChecker.getUpdateFor(info);
+        if (update != null) {
+            lines.add(Component.translatable("gui.gun_management.update_tooltip",
+                            update.currentVersionNumber(), update.latestVersion().versionNumber())
+                    .withStyle(ChatFormatting.GOLD));
         }
         lines.add(Component.translatable("gui.gun_management.double_click_toggle")
                 .withStyle(ChatFormatting.YELLOW));

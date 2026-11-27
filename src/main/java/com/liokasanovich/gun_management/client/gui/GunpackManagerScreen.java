@@ -7,6 +7,7 @@ import com.liokasanovich.gun_management.core.GunpackInfo;
 import com.liokasanovich.gun_management.core.GunpackOperator;
 import com.liokasanovich.gun_management.core.GunpackPaths;
 import com.liokasanovich.gun_management.core.GunpackScanner;
+import com.liokasanovich.gun_management.core.GunpackUpdateChecker;
 import com.liokasanovich.gun_management.core.ModrinthClient;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
@@ -75,6 +76,8 @@ public class GunpackManagerScreen extends Screen {
     private GunpackListWidget enabledList;
     private Button enableButton;
     private Button disableButton;
+    private Button updateButton;
+    private boolean updatingPacks = false;
 
     // Online tab state
     private EditBox onlineSearchBox;
@@ -180,6 +183,15 @@ public class GunpackManagerScreen extends Screen {
                 .bounds(142, btnY, 96, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.gun_management.refresh"), b -> refreshLocalPacks())
                 .bounds(244, btnY, 70, 20).build());
+        updateButton = Button.builder(updateButtonLabel(), b -> onUpdateButtonClicked())
+                .bounds(320, btnY, 112, 20).build();
+        updateButton.active = !updatingPacks;
+        addRenderableWidget(updateButton);
+
+        if (GunpackUpdateChecker.getUpdateCount() > 0 && statusMessage.isBlank()) {
+            statusMessage = Component.translatable("gui.gun_management.updates_available",
+                    GunpackUpdateChecker.getUpdateCount()).getString();
+        }
 
         refreshLocalPacks();
         updateTransferButtons();
@@ -352,10 +364,102 @@ public class GunpackManagerScreen extends Screen {
         );
     }
 
-    private void searchOnline() {
-        if (onlineSearching) {
+    private Component updateButtonLabel() {
+        int count = GunpackUpdateChecker.getUpdateCount();
+        if (count > 0) {
+            return Component.translatable("gui.gun_management.update_all", count)
+                    .withStyle(net.minecraft.ChatFormatting.GOLD);
+        }
+        return Component.translatable("gui.gun_management.check_updates");
+    }
+
+    private void refreshUpdateButton() {
+        if (updateButton != null) {
+            updateButton.setMessage(updateButtonLabel());
+            updateButton.active = !updatingPacks;
+        }
+    }
+
+    private void onUpdateButtonClicked() {
+        if (updatingPacks) {
             return;
         }
+        List<GunpackUpdateChecker.PackUpdate> updates = GunpackUpdateChecker.getCachedUpdates();
+        if (updates.isEmpty()) {
+            updatingPacks = true;
+            refreshUpdateButton();
+            this.statusMessage = Component.translatable("gui.gun_management.checking_updates").getString();
+            GunpackUpdateChecker.checkUpdatesAsync(GunpackPaths.getTaczDir()).whenComplete((found, err) ->
+                    Minecraft.getInstance().execute(() -> {
+                        updatingPacks = false;
+                        refreshUpdateButton();
+                        if (err != null) {
+                            Throwable cause = err.getCause() != null ? err.getCause() : err;
+                            this.statusMessage = "Update check failed: " + cause.getMessage();
+                            return;
+                        }
+                        int count = found == null ? 0 : found.size();
+                        if (count > 0) {
+                            this.statusMessage = Component.translatable("gui.gun_management.updates_available", count).getString();
+                        } else {
+                            this.statusMessage = Component.translatable("gui.gun_management.up_to_date").getString();
+                        }
+                        filterLocalLists();
+                    }));
+            return;
+        }
+
+        boolean hasEnabledUpdate = updates.stream().anyMatch(u -> u.localPack().enabled());
+        if (hasEnabledUpdate && isInWorld()) {
+            this.statusMessage = Component.translatable("gui.gun_management.update_in_world_blocked").getString();
+            return;
+        }
+
+        updatingPacks = true;
+        refreshUpdateButton();
+        Path taczDir = GunpackPaths.getTaczDir();
+        java.util.concurrent.atomic.AtomicInteger successCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.CompletableFuture<Void> chain = java.util.concurrent.CompletableFuture.completedFuture(null);
+
+        for (GunpackUpdateChecker.PackUpdate update : updates) {
+            chain = chain.thenCompose(ignored -> {
+                Path oldPath = update.localPack().path();
+                Path installDir = oldPath.getParent() != null ? oldPath.getParent() : taczDir;
+                String display = update.localPack().displayName();
+                return ModrinthClient.downloadAndInstallAsync(
+                                update.latestVersion(), taczDir, installDir,
+                                (done, total) -> updateDownloadProgress(display, done, total))
+                        .thenAccept(newPath -> {
+                            try {
+                                if (!oldPath.toAbsolutePath().normalize().equals(newPath.toAbsolutePath().normalize())) {
+                                    java.nio.file.Files.deleteIfExists(oldPath);
+                                }
+                            } catch (java.io.IOException ignoredEx) {
+                            }
+                            GunpackUpdateChecker.clearUpdateFor(update.localPack());
+                            successCount.incrementAndGet();
+                        });
+            });
+        }
+
+        chain.whenComplete((ignored, err) ->
+                Minecraft.getInstance().execute(() -> {
+                    updatingPacks = false;
+                    refreshUpdateButton();
+                    if (err != null) {
+                        Throwable cause = err.getCause() != null ? err.getCause() : err;
+                        this.statusMessage = "Update failed: " + cause.getMessage();
+                        refreshLocalPacks();
+                        return;
+                    }
+                    this.statusMessage = Component.translatable("gui.gun_management.updated_count",
+                            successCount.get()).getString();
+                    GunpackOperator.reloadAllPacks().thenRun(() ->
+                            Minecraft.getInstance().execute(this::refreshLocalPacks));
+                }));
+    }
+
+    private void searchOnline() {
         onlineSearching = true;
         final int gen = ++searchGeneration;
         final OnlineSource activeSource = onlineSource;
@@ -595,6 +699,16 @@ public class GunpackManagerScreen extends Screen {
         } finally {
             graphics.disableScissor();
         }
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (currentTab == Tab.ONLINE && onlineSearchBox != null && onlineSearchBox.isFocused()
+                && (keyCode == 257 || keyCode == 335)) {
+            searchOnline();
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     @Override
