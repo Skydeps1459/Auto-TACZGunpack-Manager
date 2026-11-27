@@ -26,7 +26,10 @@ import java.util.Base64;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.ZipEntry;
@@ -116,6 +119,8 @@ public final class GitHubClient {
         void onProgress(long downloadedBytes, long totalBytes);
     }
 
+    private static final Map<String, RepoDetails> DETAILS_CACHE = new ConcurrentHashMap<>();
+
     private GitHubClient() {
     }
 
@@ -135,12 +140,12 @@ public final class GitHubClient {
                 .build();
 
         return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-                .thenApply(resp -> {
+                .thenCompose(resp -> {
                     if (resp.statusCode() != 200) {
                         throw new RuntimeException("GitHub search failed with HTTP " + resp.statusCode());
                     }
                     JsonObject root = GSON.fromJson(resp.body(), JsonObject.class);
-                    List<GitHubRepo> results = new ArrayList<>();
+                    List<GitHubRepo> candidates = new ArrayList<>();
                     if (root != null && root.has("items") && root.get("items").isJsonArray()) {
                         for (JsonElement el : root.getAsJsonArray("items")) {
                             JsonObject obj = el.getAsJsonObject();
@@ -151,7 +156,7 @@ public final class GitHubClient {
                             }
                             JsonObject ownerObj = obj.has("owner") && obj.get("owner").isJsonObject()
                                     ? obj.getAsJsonObject("owner") : null;
-                            results.add(new GitHubRepo(
+                            candidates.add(new GitHubRepo(
                                     fullName,
                                     repoName,
                                     ownerObj != null ? getString(ownerObj, "login", "Unknown") : "Unknown",
@@ -161,16 +166,46 @@ public final class GitHubClient {
                                     getString(obj, "default_branch", "main"),
                                     getString(obj, "html_url", "")
                             ));
+                            if (candidates.size() >= 15) {
+                                break;
+                            }
                         }
                     }
-                    return results;
+
+                    // Only include repositories that actually contain at least one .zip gunpack.
+                    List<CompletableFuture<Optional<GitHubRepo>>> checks = candidates.stream()
+                            .map(repo -> findGunpackZipsAsync(repo)
+                                    .thenApply(zips -> {
+                                        if (!zips.isEmpty()) {
+                                            DETAILS_CACHE.computeIfAbsent(repo.fullName(),
+                                                    k -> new RepoDetails(filterReadmeText(repo.description()), zips));
+                                            return Optional.of(repo);
+                                        }
+                                        return Optional.<GitHubRepo>empty();
+                                    })
+                                    .exceptionally(ex -> Optional.empty()))
+                            .toList();
+
+                    return CompletableFuture.allOf(checks.toArray(new CompletableFuture[0]))
+                            .thenApply(v -> checks.stream()
+                                    .map(CompletableFuture::join)
+                                    .flatMap(Optional::stream)
+                                    .limit(limit)
+                                    .toList());
                 });
     }
 
     public static CompletableFuture<RepoDetails> fetchRepoDetailsAsync(GitHubRepo repo) {
         CompletableFuture<String> readmeFuture = fetchFilteredReadmeAsync(repo);
-        CompletableFuture<List<GunpackZipAsset>> zipsFuture = findGunpackZipsAsync(repo);
-        return readmeFuture.thenCombine(zipsFuture, RepoDetails::new);
+        RepoDetails cached = DETAILS_CACHE.get(repo.fullName());
+        CompletableFuture<List<GunpackZipAsset>> zipsFuture = (cached != null && !cached.zipAssets().isEmpty())
+                ? CompletableFuture.completedFuture(cached.zipAssets())
+                : findGunpackZipsAsync(repo);
+        return readmeFuture.thenCombine(zipsFuture, (readme, zips) -> {
+            RepoDetails details = new RepoDetails(readme, zips);
+            DETAILS_CACHE.put(repo.fullName(), details);
+            return details;
+        });
     }
 
     private static CompletableFuture<String> fetchFilteredReadmeAsync(GitHubRepo repo) {

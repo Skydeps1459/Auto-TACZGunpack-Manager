@@ -7,6 +7,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.ObjectSelectionList;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import org.jetbrains.annotations.Nullable;
@@ -98,7 +99,8 @@ public class GunpackListWidget extends ObjectSelectionList<GunpackListWidget.Ent
             int textX = iconX + iconSize + 6;
             int maxTextWidth = Math.max(40, width - iconSize - 20);
 
-            String title = font.plainSubstrByWidth(pack.displayName(), maxTextWidth);
+            String resolvedName = resolveDisplayName(pack);
+            String title = font.plainSubstrByWidth(resolvedName, maxTextWidth);
             graphics.drawString(font, title, textX, top + 3, 0xFFFFFF, false);
 
             String meta = String.format("v%s | G:%d A:%d Att:%d",
@@ -148,9 +150,14 @@ public class GunpackListWidget extends ObjectSelectionList<GunpackListWidget.Ent
         return entry != null ? entry.getPack() : null;
     }
 
+    public static String resolveDisplayName(GunpackInfo info) {
+        String raw = info.displayName();
+        return I18n.exists(raw) ? I18n.get(raw) : raw;
+    }
+
     public static List<Component> buildTooltip(GunpackInfo info) {
         List<Component> lines = new ArrayList<>();
-        lines.add(Component.literal(info.displayName()).withStyle(ChatFormatting.BOLD, ChatFormatting.WHITE));
+        lines.add(Component.literal(resolveDisplayName(info)).withStyle(ChatFormatting.BOLD, ChatFormatting.WHITE));
         lines.add(Component.literal("Namespace: " + info.namespace()).withStyle(ChatFormatting.GRAY));
         lines.add(Component.literal("File: " + info.fileName()).withStyle(ChatFormatting.GRAY));
         if (!info.description().isBlank()) {
