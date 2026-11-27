@@ -35,6 +35,7 @@
   "gui.gun_management.refresh": "Refresh",
   "gui.gun_management.install": "Install Pack",
   "gui.gun_management.pending_restart": "[Pending Restart]",
+  "gui.gun_management.disable_in_world_blocked": "Disabling gunpacks is disabled while in-game. Return to the main menu first.",
   "gui.gun_management.double_click_toggle": "Double-click to enable/disable",
   "gui.gun_management.reloading": "Reloading TaCZ gunpacks...",
   "gui.gun_management.reloaded": "TaCZ gunpacks reloaded.",

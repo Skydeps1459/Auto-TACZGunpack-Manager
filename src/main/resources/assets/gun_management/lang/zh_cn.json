@@ -35,6 +35,7 @@
   "gui.gun_management.refresh": "刷新",
   "gui.gun_management.install": "一键安装",
   "gui.gun_management.pending_restart": "[待重启生效]",
+  "gui.gun_management.disable_in_world_blocked": "游戏内禁止卸载/禁用枪包，请先退出到主菜单再操作。",
   "gui.gun_management.double_click_toggle": "双击切换启用/禁用状态",
   "gui.gun_management.reloading": "正在重载 TaCZ 枪包...",
   "gui.gun_management.reloaded": "TaCZ 枪包重载完成。",
