@@ -24,9 +24,11 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -80,6 +82,8 @@ public final class ModrinthClient {
         void onProgress(long downloadedBytes, long totalBytes);
     }
 
+    private static final Map<String, Optional<ModrinthVersion>> VERSION_CACHE = new ConcurrentHashMap<>();
+
     private static final Set<String> EXCLUDED_SLUGS = Set.of(
             "timeless-and-classics-zero",
             "tacz-1.21.1",
@@ -126,12 +130,12 @@ public final class ModrinthClient {
                 .build();
 
         return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-                .thenApply(resp -> {
+                .thenCompose(resp -> {
                     if (resp.statusCode() != 200) {
                         throw new RuntimeException("Modrinth search failed with HTTP " + resp.statusCode());
                     }
                     JsonObject root = GSON.fromJson(resp.body(), JsonObject.class);
-                    List<ModrinthProject> list = new ArrayList<>();
+                    List<ModrinthProject> candidates = new ArrayList<>();
                     if (root != null && root.has("hits") && root.get("hits").isJsonArray()) {
                         for (JsonElement el : root.getAsJsonArray("hits")) {
                             JsonObject obj = el.getAsJsonObject();
@@ -140,7 +144,7 @@ public final class ModrinthClient {
                             if ("modpack".equals(projectType) || EXCLUDED_SLUGS.contains(slug)) {
                                 continue;
                             }
-                            list.add(new ModrinthProject(
+                            candidates.add(new ModrinthProject(
                                     getString(obj, "project_id", ""),
                                     slug,
                                     getString(obj, "title", "Unknown"),
@@ -151,16 +155,33 @@ public final class ModrinthClient {
                                     getString(obj, "date_modified", ""),
                                     getNullableString(obj, "latest_version")
                             ));
-                            if (list.size() >= limit) {
+                            if (candidates.size() >= 30) {
                                 break;
                             }
                         }
                     }
-                    return list;
+
+                    // Verify each candidate actually has a .zip gunpack file before adding to search results.
+                    List<CompletableFuture<Optional<ModrinthProject>>> checks = candidates.stream()
+                            .map(proj -> getLatestCompatibleVersionAsync(proj.projectId())
+                                    .thenApply(optVer -> optVer.isPresent() ? Optional.of(proj) : Optional.<ModrinthProject>empty())
+                                    .exceptionally(ex -> Optional.empty()))
+                            .toList();
+
+                    return CompletableFuture.allOf(checks.toArray(new CompletableFuture[0]))
+                            .thenApply(v -> checks.stream()
+                                    .map(CompletableFuture::join)
+                                    .flatMap(Optional::stream)
+                                    .limit(limit)
+                                    .toList());
                 });
     }
 
     public static CompletableFuture<Optional<ModrinthVersion>> getLatestCompatibleVersionAsync(String projectId) {
+        Optional<ModrinthVersion> cached = VERSION_CACHE.get(projectId);
+        if (cached != null) {
+            return CompletableFuture.completedFuture(cached);
+        }
         String encodedGameVersions = URLEncoder.encode("[\"1.21.1\"]", StandardCharsets.UTF_8);
         String preferredUrl = API_BASE + "/project/" + URLEncoder.encode(projectId, StandardCharsets.UTF_8)
                 + "/version?game_versions=" + encodedGameVersions;
@@ -169,9 +190,13 @@ public final class ModrinthClient {
 
         return fetchFirstZipVersion(preferredUrl).thenCompose(opt -> {
             if (opt.isPresent()) {
+                VERSION_CACHE.put(projectId, opt);
                 return CompletableFuture.completedFuture(opt);
             }
-            return fetchFirstZipVersion(fallbackUrl);
+            return fetchFirstZipVersion(fallbackUrl).thenApply(fallbackOpt -> {
+                VERSION_CACHE.put(projectId, fallbackOpt);
+                return fallbackOpt;
+            });
         });
     }
 
