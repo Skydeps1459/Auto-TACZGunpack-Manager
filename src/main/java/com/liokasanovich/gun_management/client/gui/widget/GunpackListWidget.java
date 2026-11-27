@@ -111,28 +111,6 @@ public class GunpackListWidget extends ObjectSelectionList<GunpackListWidget.Ent
                 String authors = font.plainSubstrByWidth(String.join(", ", pack.authors()), maxTextWidth);
                 graphics.drawString(font, authors, textX, top + 24, 0x888888, false);
             }
-
-            if (hovering) {
-                List<Component> tooltip = buildTooltip(pack);
-                graphics.renderComponentTooltip(font, tooltip, mouseX, mouseY);
-            }
-        }
-
-        private List<Component> buildTooltip(GunpackInfo info) {
-            List<Component> lines = new ArrayList<>();
-            lines.add(Component.literal(info.displayName()).withStyle(ChatFormatting.BOLD, ChatFormatting.WHITE));
-            lines.add(Component.literal("Namespace: " + info.namespace()).withStyle(ChatFormatting.GRAY));
-            lines.add(Component.literal("File: " + info.fileName()).withStyle(ChatFormatting.GRAY));
-            if (!info.description().isBlank()) {
-                lines.add(Component.literal(info.description()).withStyle(ChatFormatting.AQUA));
-            }
-            if (!info.sha256().isBlank()) {
-                String shortHash = info.sha256().substring(0, Math.min(12, info.sha256().length()));
-                lines.add(Component.literal("SHA-256: " + shortHash + "...").withStyle(ChatFormatting.DARK_GRAY));
-            }
-            lines.add(Component.translatable("gui.gun_management.double_click_toggle")
-                    .withStyle(ChatFormatting.YELLOW));
-            return lines;
         }
 
         @Override
@@ -160,5 +138,28 @@ public class GunpackListWidget extends ObjectSelectionList<GunpackListWidget.Ent
     public GunpackInfo getSelectedPack() {
         Entry entry = getSelected();
         return entry != null ? entry.getPack() : null;
+    }
+
+    @Nullable
+    public GunpackInfo getHoveredPack() {
+        Entry entry = getHovered();
+        return entry != null ? entry.getPack() : null;
+    }
+
+    public static List<Component> buildTooltip(GunpackInfo info) {
+        List<Component> lines = new ArrayList<>();
+        lines.add(Component.literal(info.displayName()).withStyle(ChatFormatting.BOLD, ChatFormatting.WHITE));
+        lines.add(Component.literal("Namespace: " + info.namespace()).withStyle(ChatFormatting.GRAY));
+        lines.add(Component.literal("File: " + info.fileName()).withStyle(ChatFormatting.GRAY));
+        if (!info.description().isBlank()) {
+            lines.add(Component.literal(info.description()).withStyle(ChatFormatting.AQUA));
+        }
+        if (!info.sha256().isBlank()) {
+            String shortHash = info.sha256().substring(0, Math.min(12, info.sha256().length()));
+            lines.add(Component.literal("SHA-256: " + shortHash + "...").withStyle(ChatFormatting.DARK_GRAY));
+        }
+        lines.add(Component.translatable("gui.gun_management.double_click_toggle")
+                .withStyle(ChatFormatting.YELLOW));
+        return lines;
     }
 }

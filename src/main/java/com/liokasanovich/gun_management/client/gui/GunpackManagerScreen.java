@@ -126,10 +126,10 @@ public class GunpackManagerScreen extends Screen {
     }
 
     private void initLocalTab() {
-        int topY = 34;
-        int bottomMargin = 34;
-        int listTop = topY + 26;
-        int listHeight = Math.max(80, this.height - listTop - bottomMargin);
+        int topY = 32;
+        int bottomMargin = 46;
+        int listTop = 70;
+        int listHeight = Math.max(70, this.height - listTop - bottomMargin);
 
         localSearchBox = new EditBox(this.font, 16, topY, Math.min(260, this.width - 32), 20,
                 Component.translatable("gui.gun_management.search"));
@@ -185,18 +185,18 @@ public class GunpackManagerScreen extends Screen {
     }
 
     private void initOnlineTab() {
-        int topY = 34;
-        int bottomMargin = 34;
-        int listTop = topY + 26;
-        int listHeight = Math.max(80, this.height - listTop - bottomMargin);
+        int topY = 32;
+        int bottomMargin = 46;
+        int listTop = 60;
+        int listHeight = Math.max(70, this.height - listTop - bottomMargin);
 
         sourceToggleButton = Button.builder(sourceLabel(), b -> toggleOnlineSource())
-                .bounds(16, topY, 108, 20).build();
+                .bounds(16, topY, 96, 20).build();
         addRenderableWidget(sourceToggleButton);
 
-        int searchX = 128;
-        int rightReserve = onlineSource == OnlineSource.GITHUB ? 204 : 80;
-        int searchWidth = Math.max(100, this.width - searchX - rightReserve);
+        int searchX = 116;
+        int rightReserve = onlineSource == OnlineSource.GITHUB ? 190 : 72;
+        int searchWidth = Math.max(80, this.width - searchX - rightReserve);
         onlineSearchBox = new EditBox(this.font, searchX, topY, searchWidth, 20,
                 Component.translatable("gui.gun_management.search"));
         onlineSearchBox.setHint(onlineSource == OnlineSource.GITHUB
@@ -205,11 +205,11 @@ public class GunpackManagerScreen extends Screen {
         addRenderableWidget(onlineSearchBox);
 
         addRenderableWidget(Button.builder(Component.translatable("gui.gun_management.search_btn"), b -> searchOnline())
-                .bounds(searchX + searchWidth + 4, topY, 60, 20).build());
+                .bounds(searchX + searchWidth + 4, topY, 48, 20).build());
 
         if (onlineSource == OnlineSource.GITHUB) {
             mirrorToggleButton = Button.builder(Component.translatable(githubMirror.translationKey()), b -> cycleMirror())
-                    .bounds(searchX + searchWidth + 68, topY, 120, 20).build();
+                    .bounds(searchX + searchWidth + 56, topY, 118, 20).build();
             addRenderableWidget(mirrorToggleButton);
         } else {
             mirrorToggleButton = null;
@@ -475,20 +475,29 @@ public class GunpackManagerScreen extends Screen {
         if (currentTab == Tab.LOCAL && disabledList != null && enabledList != null) {
             graphics.drawString(this.font,
                     Component.translatable("gui.gun_management.disabled_header"),
-                    disabledList.getLeft(), disabledList.getTop() - 10, 0xFFAAAA, false);
+                    disabledList.getLeft(), disabledList.getTop() - 12, 0xFFAAAA, false);
             graphics.drawString(this.font,
                     Component.translatable("gui.gun_management.enabled_header"),
-                    enabledList.getLeft(), enabledList.getTop() - 10, 0xAAFFAA, false);
+                    enabledList.getLeft(), enabledList.getTop() - 12, 0xAAFFAA, false);
         } else if (currentTab == Tab.ONLINE && onlineList != null) {
             renderOnlineDrawer(graphics);
         }
 
         if (!statusMessage.isBlank()) {
-            int msgX = currentTab == Tab.LOCAL ? 322 : (onlineList != null ? onlineList.getLeft() + onlineList.getWidth() + 180 : 322);
-            int maxW = Math.max(80, this.width - msgX - 84);
+            int maxW = Math.max(100, this.width - 32);
             graphics.drawString(this.font,
                     this.font.plainSubstrByWidth(statusMessage, maxW),
-                    msgX, this.height - 22, 0xDDDD88, false);
+                    16, this.height - 40, 0xDDDD88, false);
+        }
+
+        if (currentTab == Tab.LOCAL && disabledList != null && enabledList != null) {
+            GunpackInfo hovered = disabledList.getHoveredPack();
+            if (hovered == null) {
+                hovered = enabledList.getHoveredPack();
+            }
+            if (hovered != null) {
+                graphics.renderComponentTooltip(this.font, GunpackListWidget.buildTooltip(hovered), mouseX, mouseY);
+            }
         }
     }
 
@@ -499,55 +508,60 @@ public class GunpackManagerScreen extends Screen {
         int drawerH = onlineList.getBottom() - onlineList.getTop();
 
         graphics.fill(drawerX, drawerY, drawerX + drawerW, drawerY + drawerH, 0x66000000);
-        if (selectedOnline == null) {
-            graphics.drawString(this.font,
-                    Component.translatable("gui.gun_management.select_project"),
-                    drawerX + 8, drawerY + 10, 0xAAAAAA, false);
-            return;
-        }
-
-        int y = drawerY + 8;
-        graphics.drawString(this.font,
-                this.font.plainSubstrByWidth(selectedOnline.title(), drawerW - 16),
-                drawerX + 8, y, 0xFFFFFF, false);
-        y += 14;
-        graphics.drawString(this.font,
-                this.font.plainSubstrByWidth(selectedOnline.subtitle(), drawerW - 16),
-                drawerX + 8, y, 0xAAAAAA, false);
-        y += 14;
-
-        if (selectedOnline.modrinth() != null) {
-            graphics.drawWordWrap(this.font,
-                    Component.literal(selectedOnline.modrinth().description()),
-                    drawerX + 8, y, drawerW - 16, 0xCCCCCC);
-        } else if (selectedOnline.github() != null) {
-            GitHubClient.RepoDetails details = githubDetailsCache.get(selectedOnline.github().fullName());
-            if (details == null) {
+        graphics.enableScissor(drawerX, drawerY, drawerX + drawerW, drawerY + drawerH);
+        try {
+            if (selectedOnline == null) {
                 graphics.drawString(this.font,
-                        Component.translatable("gui.gun_management.github.loading_details"),
-                        drawerX + 8, y, 0xDDDD88, false);
+                        Component.translatable("gui.gun_management.select_project"),
+                        drawerX + 8, drawerY + 10, 0xAAAAAA, false);
                 return;
             }
-            if (!details.zipAssets().isEmpty()) {
-                GitHubClient.GunpackZipAsset zip = details.zipAssets().get(0);
-                String zipLine = "ZIP: " + zip.fileName() + " (" + zip.sourceLabel() + ")";
-                graphics.drawString(this.font,
-                        this.font.plainSubstrByWidth(zipLine, drawerW - 16),
-                        drawerX + 8, y, 0x88FF88, false);
-            } else {
-                graphics.drawString(this.font,
-                        Component.translatable("gui.gun_management.github.no_zip"),
-                        drawerX + 8, y, 0xFF8888, false);
-            }
+
+            int y = drawerY + 8;
+            graphics.drawString(this.font,
+                    this.font.plainSubstrByWidth(selectedOnline.title(), drawerW - 16),
+                    drawerX + 8, y, 0xFFFFFF, false);
             y += 14;
-            String body = !details.filteredReadme().isBlank()
-                    ? details.filteredReadme()
-                    : selectedOnline.github().description();
-            if (!body.isBlank()) {
+            graphics.drawString(this.font,
+                    this.font.plainSubstrByWidth(selectedOnline.subtitle(), drawerW - 16),
+                    drawerX + 8, y, 0xAAAAAA, false);
+            y += 14;
+
+            if (selectedOnline.modrinth() != null) {
                 graphics.drawWordWrap(this.font,
-                        Component.literal(body),
+                        Component.literal(selectedOnline.modrinth().description()),
                         drawerX + 8, y, drawerW - 16, 0xCCCCCC);
+            } else if (selectedOnline.github() != null) {
+                GitHubClient.RepoDetails details = githubDetailsCache.get(selectedOnline.github().fullName());
+                if (details == null) {
+                    graphics.drawString(this.font,
+                            Component.translatable("gui.gun_management.github.loading_details"),
+                            drawerX + 8, y, 0xDDDD88, false);
+                    return;
+                }
+                if (!details.zipAssets().isEmpty()) {
+                    GitHubClient.GunpackZipAsset zip = details.zipAssets().get(0);
+                    String zipLine = "ZIP: " + zip.fileName() + " (" + zip.sourceLabel() + ")";
+                    graphics.drawString(this.font,
+                            this.font.plainSubstrByWidth(zipLine, drawerW - 16),
+                            drawerX + 8, y, 0x88FF88, false);
+                } else {
+                    graphics.drawString(this.font,
+                            Component.translatable("gui.gun_management.github.no_zip"),
+                            drawerX + 8, y, 0xFF8888, false);
+                }
+                y += 14;
+                String body = !details.filteredReadme().isBlank()
+                        ? details.filteredReadme()
+                        : selectedOnline.github().description();
+                if (!body.isBlank()) {
+                    graphics.drawWordWrap(this.font,
+                            Component.literal(body),
+                            drawerX + 8, y, drawerW - 16, 0xCCCCCC);
+                }
             }
+        } finally {
+            graphics.disableScissor();
         }
     }
 
