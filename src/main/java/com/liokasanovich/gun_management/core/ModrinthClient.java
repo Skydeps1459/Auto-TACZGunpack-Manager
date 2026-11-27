@@ -115,66 +115,130 @@ public final class ModrinthClient {
                 : (trimmed.toLowerCase(Locale.ROOT).contains("tacz") ? trimmed : "tacz " + trimmed);
         String sortIndex = isDefault ? "downloads" : "relevance";
 
-        // Relaxed Modrinth search: do not restrict project_type so gunpacks tagged as 'mod' also appear.
-        String encodedQuery = URLEncoder.encode(effectiveQuery, StandardCharsets.UTF_8);
-        int fetchLimit = Math.min(100, Math.max(limit, 50));
-        String url = API_BASE + "/search?query=" + encodedQuery
-                + "&index=" + sortIndex
-                + "&limit=" + fetchLimit
-                + "&offset=" + offset;
+        // Scan up to 3 pages (300 hits) in batches of 100 and resolve all latest_version IDs
+        // via Modrinth's batch /v2/versions?ids=[...] endpoint (only 2 HTTP requests per 100 hits).
+        return CompletableFuture.supplyAsync(() -> {
+            List<ModrinthProject> verified = new ArrayList<>();
+            int maxPages = isDefault ? 3 : 2;
+            for (int page = 0; page < maxPages && verified.size() < limit; page++) {
+                int pageOffset = offset + page * 100;
+                List<ModrinthProject> pageHits = fetchSearchPage(effectiveQuery, sortIndex, 100, pageOffset);
+                if (pageHits.isEmpty()) {
+                    break;
+                }
+                List<ModrinthProject> pageVerified = batchFilterZipProjects(pageHits);
+                verified.addAll(pageVerified);
+                if (pageHits.size() < 100) {
+                    break;
+                }
+            }
+            if (verified.size() > limit) {
+                return List.copyOf(verified.subList(0, limit));
+            }
+            return verified;
+        }, IO_EXECUTOR);
+    }
 
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                .header("User-Agent", USER_AGENT)
-                .timeout(Duration.ofSeconds(20))
-                .GET()
-                .build();
+    private static List<ModrinthProject> fetchSearchPage(String query, String sortIndex, int pageLimit, int pageOffset) {
+        try {
+            String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+            String url = API_BASE + "/search?query=" + encodedQuery
+                    + "&index=" + sortIndex
+                    + "&limit=" + pageLimit
+                    + "&offset=" + pageOffset;
 
-        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-                .thenCompose(resp -> {
-                    if (resp.statusCode() != 200) {
-                        throw new RuntimeException("Modrinth search failed with HTTP " + resp.statusCode());
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("User-Agent", USER_AGENT)
+                    .timeout(Duration.ofSeconds(20))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> resp = HTTP.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (resp.statusCode() != 200) {
+                throw new RuntimeException("Modrinth search failed with HTTP " + resp.statusCode());
+            }
+            JsonObject root = GSON.fromJson(resp.body(), JsonObject.class);
+            List<ModrinthProject> candidates = new ArrayList<>();
+            if (root != null && root.has("hits") && root.get("hits").isJsonArray()) {
+                for (JsonElement el : root.getAsJsonArray("hits")) {
+                    JsonObject obj = el.getAsJsonObject();
+                    String slug = getString(obj, "slug", "").toLowerCase(Locale.ROOT);
+                    String projectType = getString(obj, "project_type", "");
+                    if ("modpack".equals(projectType) || EXCLUDED_SLUGS.contains(slug)) {
+                        continue;
                     }
-                    JsonObject root = GSON.fromJson(resp.body(), JsonObject.class);
-                    List<ModrinthProject> candidates = new ArrayList<>();
-                    if (root != null && root.has("hits") && root.get("hits").isJsonArray()) {
-                        for (JsonElement el : root.getAsJsonArray("hits")) {
-                            JsonObject obj = el.getAsJsonObject();
-                            String slug = getString(obj, "slug", "").toLowerCase(Locale.ROOT);
-                            String projectType = getString(obj, "project_type", "");
-                            if ("modpack".equals(projectType) || EXCLUDED_SLUGS.contains(slug)) {
-                                continue;
-                            }
-                            candidates.add(new ModrinthProject(
-                                    getString(obj, "project_id", ""),
-                                    slug,
-                                    getString(obj, "title", "Unknown"),
-                                    getString(obj, "description", ""),
-                                    getString(obj, "author", "Unknown"),
-                                    getNullableString(obj, "icon_url"),
-                                    obj.has("downloads") ? obj.get("downloads").getAsLong() : 0L,
-                                    getString(obj, "date_modified", ""),
-                                    getNullableString(obj, "latest_version")
-                            ));
-                            if (candidates.size() >= 30) {
-                                break;
+                    candidates.add(new ModrinthProject(
+                            getString(obj, "project_id", ""),
+                            slug,
+                            getString(obj, "title", "Unknown"),
+                            getString(obj, "description", ""),
+                            getString(obj, "author", "Unknown"),
+                            getNullableString(obj, "icon_url"),
+                            obj.has("downloads") ? obj.get("downloads").getAsLong() : 0L,
+                            getString(obj, "date_modified", ""),
+                            getNullableString(obj, "latest_version")
+                    ));
+                }
+            }
+            return candidates;
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException(e.getMessage(), e);
+        }
+    }
+
+    private static List<ModrinthProject> batchFilterZipProjects(List<ModrinthProject> candidates) {
+        List<String> versionIdsToFetch = new ArrayList<>();
+        for (ModrinthProject p : candidates) {
+            if (!VERSION_CACHE.containsKey(p.projectId()) && p.latestVersion() != null && !p.latestVersion().isBlank()) {
+                versionIdsToFetch.add(p.latestVersion());
+            }
+        }
+
+        if (!versionIdsToFetch.isEmpty()) {
+            try {
+                JsonArray idsArr = new JsonArray();
+                for (String vid : versionIdsToFetch) {
+                    idsArr.add(vid);
+                }
+                String url = API_BASE + "/versions?ids=" + URLEncoder.encode(GSON.toJson(idsArr), StandardCharsets.UTF_8);
+                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                        .header("User-Agent", USER_AGENT)
+                        .timeout(Duration.ofSeconds(20))
+                        .GET()
+                        .build();
+                HttpResponse<String> resp = HTTP.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                if (resp.statusCode() == 200) {
+                    JsonArray versions = GSON.fromJson(resp.body(), JsonArray.class);
+                    if (versions != null) {
+                        for (JsonElement el : versions) {
+                            JsonObject vObj = el.getAsJsonObject();
+                            String pid = getString(vObj, "project_id", "");
+                            if (!pid.isBlank()) {
+                                Optional<ModrinthVersion> parsed = parseVersionObject(vObj);
+                                VERSION_CACHE.put(pid, parsed);
                             }
                         }
                     }
+                }
+            } catch (Exception e) {
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                LOGGER.warn("Modrinth batch version lookup failed: {}", e.getMessage());
+            }
+        }
 
-                    // Verify each candidate actually has a .zip gunpack file before adding to search results.
-                    List<CompletableFuture<Optional<ModrinthProject>>> checks = candidates.stream()
-                            .map(proj -> getLatestCompatibleVersionAsync(proj.projectId())
-                                    .thenApply(optVer -> optVer.isPresent() ? Optional.of(proj) : Optional.<ModrinthProject>empty())
-                                    .exceptionally(ex -> Optional.empty()))
-                            .toList();
-
-                    return CompletableFuture.allOf(checks.toArray(new CompletableFuture[0]))
-                            .thenApply(v -> checks.stream()
-                                    .map(CompletableFuture::join)
-                                    .flatMap(Optional::stream)
-                                    .limit(limit)
-                                    .toList());
-                });
+        List<ModrinthProject> verified = new ArrayList<>();
+        for (ModrinthProject p : candidates) {
+            Optional<ModrinthVersion> cached = VERSION_CACHE.get(p.projectId());
+            if (cached != null && cached.isPresent()) {
+                verified.add(p);
+            }
+        }
+        return verified;
     }
 
     public static CompletableFuture<Optional<ModrinthVersion>> getLatestCompatibleVersionAsync(String projectId) {

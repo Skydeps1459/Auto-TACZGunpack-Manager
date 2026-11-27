@@ -141,6 +141,9 @@ public final class GitHubClient {
 
         return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
                 .thenCompose(resp -> {
+                    if (resp.statusCode() == 403) {
+                        throw new RuntimeException("GitHub API rate limit exceeded (HTTP 403). Try again later.");
+                    }
                     if (resp.statusCode() != 200) {
                         throw new RuntimeException("GitHub search failed with HTTP " + resp.statusCode());
                     }
@@ -166,24 +169,28 @@ public final class GitHubClient {
                                     getString(obj, "default_branch", "main"),
                                     getString(obj, "html_url", "")
                             ));
-                            if (candidates.size() >= 15) {
+                            if (candidates.size() >= Math.min(limit, 25)) {
                                 break;
                             }
                         }
                     }
 
-                    // Only include repositories that actually contain at least one .zip gunpack.
+                    // Only include repositories that actually contain at least one .zip gunpack (using cache first).
                     List<CompletableFuture<Optional<GitHubRepo>>> checks = candidates.stream()
-                            .map(repo -> findGunpackZipsAsync(repo)
-                                    .thenApply(zips -> {
-                                        if (!zips.isEmpty()) {
-                                            DETAILS_CACHE.computeIfAbsent(repo.fullName(),
-                                                    k -> new RepoDetails(filterReadmeText(repo.description()), zips));
-                                            return Optional.of(repo);
-                                        }
-                                        return Optional.<GitHubRepo>empty();
-                                    })
-                                    .exceptionally(ex -> Optional.empty()))
+                            .map(repo -> {
+                                RepoDetails cached = DETAILS_CACHE.get(repo.fullName());
+                                if (cached != null) {
+                                    return CompletableFuture.completedFuture(
+                                            cached.zipAssets().isEmpty() ? Optional.<GitHubRepo>empty() : Optional.of(repo));
+                                }
+                                return findGunpackZipsAsync(repo)
+                                        .thenApply(zips -> {
+                                            DETAILS_CACHE.putIfAbsent(repo.fullName(),
+                                                    new RepoDetails(filterReadmeText(repo.description()), zips));
+                                            return zips.isEmpty() ? Optional.<GitHubRepo>empty() : Optional.of(repo);
+                                        })
+                                        .exceptionally(ex -> Optional.empty());
+                            })
                             .toList();
 
                     return CompletableFuture.allOf(checks.toArray(new CompletableFuture[0]))
@@ -303,8 +310,9 @@ public final class GitHubClient {
     }
 
     private static CompletableFuture<List<GunpackZipAsset>> findRootZipContentsAsync(GitHubRepo repo) {
-        String contentsUrl = API_BASE + "/repos/" + repo.fullName() + "/contents";
-        HttpRequest req = HttpRequest.newBuilder(URI.create(contentsUrl))
+        String treeUrl = API_BASE + "/repos/" + repo.fullName()
+                + "/git/trees/" + URLEncoder.encode(repo.defaultBranch(), StandardCharsets.UTF_8) + "?recursive=1";
+        HttpRequest req = HttpRequest.newBuilder(URI.create(treeUrl))
                 .header("User-Agent", USER_AGENT)
                 .header("Accept", "application/vnd.github+json")
                 .timeout(Duration.ofSeconds(15))
@@ -317,24 +325,28 @@ public final class GitHubClient {
                     if (resp.statusCode() != 200) {
                         return assets;
                     }
-                    JsonArray items = GSON.fromJson(resp.body(), JsonArray.class);
-                    if (items == null) {
+                    JsonObject root = GSON.fromJson(resp.body(), JsonObject.class);
+                    if (root == null || !root.has("tree") || !root.get("tree").isJsonArray()) {
                         return assets;
                     }
                     boolean hasGunpackMeta = false;
-                    for (JsonElement el : items) {
+                    for (JsonElement el : root.getAsJsonArray("tree")) {
                         JsonObject item = el.getAsJsonObject();
                         String type = getString(item, "type", "");
-                        String name = getString(item, "name", "");
-                        if ("file".equals(type) && "gunpack.meta.json".equalsIgnoreCase(name)) {
+                        String path = getString(item, "path", "");
+                        if (!"blob".equals(type)) {
+                            continue;
+                        }
+                        if ("gunpack.meta.json".equalsIgnoreCase(path)) {
                             hasGunpackMeta = true;
                         }
-                        if ("file".equals(type) && isGunpackZipName(name)) {
-                            String dl = getString(item, "download_url", "");
+                        int slash = path.lastIndexOf('/');
+                        String fileName = slash >= 0 ? path.substring(slash + 1) : path;
+                        if (isGunpackZipName(fileName)) {
+                            String rawUrl = "https://raw.githubusercontent.com/" + repo.fullName()
+                                    + "/" + repo.defaultBranch() + "/" + path;
                             long size = item.has("size") ? item.get("size").getAsLong() : 0L;
-                            if (!dl.isBlank()) {
-                                assets.add(new GunpackZipAsset(name, dl, size, "Repo File"));
-                            }
+                            assets.add(new GunpackZipAsset(fileName, rawUrl, size, "Repo File"));
                         }
                     }
                     if (assets.isEmpty() && hasGunpackMeta) {
