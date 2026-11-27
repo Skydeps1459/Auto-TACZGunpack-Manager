@@ -23,6 +23,7 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -82,13 +83,22 @@ public final class ModrinthClient {
     }
 
     public static CompletableFuture<List<ModrinthProject>> searchGunpacksAsync(String query, int limit, int offset) {
-        String effectiveQuery = (query == null || query.isBlank()) ? "tacz" : query.trim();
+        String trimmed = query == null ? "" : query.trim();
+        boolean isDefault = trimmed.isEmpty();
+        String effectiveQuery = isDefault
+                ? "tacz gunpack"
+                : (trimmed.toLowerCase(Locale.ROOT).contains("tacz") ? trimmed : "tacz " + trimmed);
+        String sortIndex = isDefault ? "downloads" : "relevance";
+
         String encodedQuery = URLEncoder.encode(effectiveQuery, StandardCharsets.UTF_8);
         String encodedFacets = URLEncoder.encode(
-                "[[\"versions:1.21.1\"],[\"project_type:datapack\",\"project_type:resourcepack\"]]",
+                "[[\"project_type:datapack\",\"project_type:resourcepack\"]]",
                 StandardCharsets.UTF_8);
-        String url = API_BASE + "/search?query=" + encodedQuery + "&facets=" + encodedFacets
-                + "&limit=" + limit + "&offset=" + offset;
+        String url = API_BASE + "/search?query=" + encodedQuery
+                + "&facets=" + encodedFacets
+                + "&index=" + sortIndex
+                + "&limit=" + limit
+                + "&offset=" + offset;
 
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .header("User-Agent", USER_AGENT)
@@ -106,9 +116,13 @@ public final class ModrinthClient {
                     if (root != null && root.has("hits") && root.get("hits").isJsonArray()) {
                         for (JsonElement el : root.getAsJsonArray("hits")) {
                             JsonObject obj = el.getAsJsonObject();
+                            String slug = getString(obj, "slug", "");
+                            if ("timeless-and-classics-zero".equals(slug)) {
+                                continue;
+                            }
                             list.add(new ModrinthProject(
                                     getString(obj, "project_id", ""),
-                                    getString(obj, "slug", ""),
+                                    slug,
                                     getString(obj, "title", "Unknown"),
                                     getString(obj, "description", ""),
                                     getString(obj, "author", "Unknown"),
@@ -125,9 +139,20 @@ public final class ModrinthClient {
 
     public static CompletableFuture<Optional<ModrinthVersion>> getLatestCompatibleVersionAsync(String projectId) {
         String encodedGameVersions = URLEncoder.encode("[\"1.21.1\"]", StandardCharsets.UTF_8);
-        String url = API_BASE + "/project/" + URLEncoder.encode(projectId, StandardCharsets.UTF_8)
+        String preferredUrl = API_BASE + "/project/" + URLEncoder.encode(projectId, StandardCharsets.UTF_8)
                 + "/version?game_versions=" + encodedGameVersions;
+        String fallbackUrl = API_BASE + "/project/" + URLEncoder.encode(projectId, StandardCharsets.UTF_8)
+                + "/version";
 
+        return fetchFirstZipVersion(preferredUrl).thenCompose(opt -> {
+            if (opt.isPresent()) {
+                return CompletableFuture.completedFuture(opt);
+            }
+            return fetchFirstZipVersion(fallbackUrl);
+        });
+    }
+
+    private static CompletableFuture<Optional<ModrinthVersion>> fetchFirstZipVersion(String url) {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .header("User-Agent", USER_AGENT)
                 .timeout(Duration.ofSeconds(20))
@@ -270,7 +295,7 @@ public final class ModrinthClient {
         for (JsonElement fEl : files) {
             JsonObject f = fEl.getAsJsonObject();
             String name = getString(f, "filename", "");
-            if (!name.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) {
+            if (!name.toLowerCase(Locale.ROOT).endsWith(".zip")) {
                 continue;
             }
             if (f.has("primary") && f.get("primary").getAsBoolean()) {
