@@ -2,6 +2,7 @@ package com.liokasanovich.gun_management.client.gui;
 
 import com.liokasanovich.gun_management.client.gui.widget.GunpackListWidget;
 import com.liokasanovich.gun_management.client.texture.PackIconCache;
+import com.liokasanovich.gun_management.core.GitHubClient;
 import com.liokasanovich.gun_management.core.GunpackInfo;
 import com.liokasanovich.gun_management.core.GunpackOperator;
 import com.liokasanovich.gun_management.core.GunpackPaths;
@@ -22,12 +23,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Main management screen with two tabs:
+ * Main management screen with two tabs (MC 1.20.1 Forge):
  * 1) Local dual-column enable/disable manager
- * 2) Online Modrinth browser with one-click download and SHA-256 verification
+ * 2) Online browser supporting Modrinth and GitHub (topic:tacz + acceleration mirrors)
  */
 public class GunpackManagerScreen extends Screen {
     private enum Tab {
@@ -35,8 +38,35 @@ public class GunpackManagerScreen extends Screen {
         ONLINE
     }
 
+    private enum OnlineSource {
+        MODRINTH,
+        GITHUB
+    }
+
+    private record OnlineEntry(
+            @Nullable ModrinthClient.ModrinthProject modrinth,
+            @Nullable GitHubClient.GitHubRepo github
+    ) {
+        String title() {
+            return modrinth != null ? modrinth.title() : github.name();
+        }
+
+        String subtitle() {
+            return modrinth != null
+                    ? modrinth.author() + " | " + modrinth.downloads() + " DL"
+                    : github.owner() + " | ★ " + github.stars();
+        }
+
+        @Nullable
+        String iconUrl() {
+            return modrinth != null ? modrinth.iconUrl() : github.avatarUrl();
+        }
+    }
+
     private final Screen parent;
     private Tab currentTab = Tab.LOCAL;
+    private OnlineSource onlineSource = OnlineSource.MODRINTH;
+    private GitHubClient.MirrorNode githubMirror = GitHubClient.MirrorNode.GHFAST;
 
     // Local tab state
     private List<GunpackInfo> allLocalPacks = List.of();
@@ -45,18 +75,17 @@ public class GunpackManagerScreen extends Screen {
     private GunpackListWidget enabledList;
     private Button enableButton;
     private Button disableButton;
-    private Button applyReloadButton;
-    private Button openFolderButton;
-    private Button refreshLocalButton;
 
     // Online tab state
     private EditBox onlineSearchBox;
-    private Button onlineSearchButton;
-    private ModrinthListWidget onlineList;
+    private OnlineListWidget onlineList;
+    private Button sourceToggleButton;
+    private Button mirrorToggleButton;
     private Button installButton;
-    private List<ModrinthClient.ModrinthProject> onlineProjects = List.of();
+    private List<OnlineEntry> onlineEntries = List.of();
     @Nullable
-    private ModrinthClient.ModrinthProject selectedProject;
+    private OnlineEntry selectedOnline;
+    private final Map<String, GitHubClient.RepoDetails> githubDetailsCache = new ConcurrentHashMap<>();
     private boolean onlineSearching = false;
     private boolean downloading = false;
     private String statusMessage = "";
@@ -143,17 +172,13 @@ public class GunpackManagerScreen extends Screen {
         addRenderableWidget(disableButton);
 
         int btnY = this.height - 28;
-        applyReloadButton = Button.builder(Component.translatable("gui.gun_management.apply_reload"), b -> triggerReload())
-                .bounds(16, btnY, 120, 20).build();
-        openFolderButton = Button.builder(Component.translatable("gui.gun_management.open_folder"),
+        addRenderableWidget(Button.builder(Component.translatable("gui.gun_management.apply_reload"), b -> triggerReload())
+                .bounds(16, btnY, 120, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("gui.gun_management.open_folder"),
                 b -> Util.getPlatform().openFile(GunpackPaths.getTaczDir().toFile()))
-                .bounds(142, btnY, 96, 20).build();
-        refreshLocalButton = Button.builder(Component.translatable("gui.gun_management.refresh"), b -> refreshLocalPacks())
-                .bounds(244, btnY, 70, 20).build();
-
-        addRenderableWidget(applyReloadButton);
-        addRenderableWidget(openFolderButton);
-        addRenderableWidget(refreshLocalButton);
+                .bounds(142, btnY, 96, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("gui.gun_management.refresh"), b -> refreshLocalPacks())
+                .bounds(244, btnY, 70, 20).build());
 
         refreshLocalPacks();
         updateTransferButtons();
@@ -165,33 +190,68 @@ public class GunpackManagerScreen extends Screen {
         int listTop = topY + 26;
         int listHeight = Math.max(80, this.height - listTop - bottomMargin);
 
-        int searchWidth = Math.min(260, this.width - 110);
-        onlineSearchBox = new EditBox(this.font, 16, topY, searchWidth, 20,
+        sourceToggleButton = Button.builder(sourceLabel(), b -> toggleOnlineSource())
+                .bounds(16, topY, 108, 20).build();
+        addRenderableWidget(sourceToggleButton);
+
+        int searchX = 128;
+        int rightReserve = onlineSource == OnlineSource.GITHUB ? 204 : 80;
+        int searchWidth = Math.max(100, this.width - searchX - rightReserve);
+        onlineSearchBox = new EditBox(this.font, searchX, topY, searchWidth, 20,
                 Component.translatable("gui.gun_management.search"));
-        onlineSearchBox.setHint(Component.translatable("gui.gun_management.search_online_hint"));
+        onlineSearchBox.setHint(onlineSource == OnlineSource.GITHUB
+                ? Component.translatable("gui.gun_management.search_github_hint")
+                : Component.translatable("gui.gun_management.search_online_hint"));
         addRenderableWidget(onlineSearchBox);
 
-        onlineSearchButton = Button.builder(Component.translatable("gui.gun_management.search_btn"), b -> searchOnline())
-                .bounds(16 + searchWidth + 6, topY, 70, 20)
-                .build();
-        addRenderableWidget(onlineSearchButton);
+        addRenderableWidget(Button.builder(Component.translatable("gui.gun_management.search_btn"), b -> searchOnline())
+                .bounds(searchX + searchWidth + 4, topY, 60, 20).build());
 
-        int leftWidth = Math.max(150, (int) (this.width * 0.52));
-        onlineList = new ModrinthListWidget(this.minecraft, leftWidth, listHeight, listTop, 38);
+        if (onlineSource == OnlineSource.GITHUB) {
+            mirrorToggleButton = Button.builder(Component.translatable(githubMirror.translationKey()), b -> cycleMirror())
+                    .bounds(searchX + searchWidth + 68, topY, 120, 20).build();
+            addRenderableWidget(mirrorToggleButton);
+        } else {
+            mirrorToggleButton = null;
+        }
+
+        int leftWidth = Math.max(150, (int) (this.width * 0.50));
+        onlineList = new OnlineListWidget(this.minecraft, leftWidth, listHeight, listTop, 38);
         onlineList.setLeftPos(16);
         addRenderableWidget(onlineList);
-        onlineList.setProjects(onlineProjects);
+        onlineList.setEntries(onlineEntries);
 
         int drawerX = 16 + leftWidth + 12;
         int drawerW = Math.max(120, this.width - drawerX - 16);
-        installButton = Button.builder(Component.translatable("gui.gun_management.install"), b -> installSelectedProject())
+        installButton = Button.builder(Component.translatable("gui.gun_management.install"), b -> installSelected())
                 .bounds(drawerX, this.height - 28, Math.min(160, drawerW), 20)
                 .build();
-        installButton.active = (selectedProject != null && !downloading);
+        updateInstallButton();
         addRenderableWidget(installButton);
 
-        if (onlineProjects.isEmpty() && !onlineSearching) {
+        if (onlineEntries.isEmpty() && !onlineSearching) {
             searchOnline();
+        }
+    }
+
+    private Component sourceLabel() {
+        return onlineSource == OnlineSource.MODRINTH
+                ? Component.translatable("gui.gun_management.source.modrinth")
+                : Component.translatable("gui.gun_management.source.github");
+    }
+
+    private void toggleOnlineSource() {
+        onlineSource = (onlineSource == OnlineSource.MODRINTH) ? OnlineSource.GITHUB : OnlineSource.MODRINTH;
+        onlineEntries = List.of();
+        selectedOnline = null;
+        statusMessage = "";
+        init();
+    }
+
+    private void cycleMirror() {
+        githubMirror = githubMirror.next();
+        if (mirrorToggleButton != null) {
+            mirrorToggleButton.setMessage(Component.translatable(githubMirror.translationKey()));
         }
     }
 
@@ -249,6 +309,22 @@ public class GunpackManagerScreen extends Screen {
         }
     }
 
+    private void updateInstallButton() {
+        if (installButton == null) {
+            return;
+        }
+        if (downloading || selectedOnline == null) {
+            installButton.active = false;
+            return;
+        }
+        if (selectedOnline.github() != null) {
+            GitHubClient.RepoDetails details = githubDetailsCache.get(selectedOnline.github().fullName());
+            installButton.active = (details != null && !details.zipAssets().isEmpty());
+        } else {
+            installButton.active = true;
+        }
+    }
+
     private void togglePack(GunpackInfo pack, boolean enable) {
         GunpackOperator.OperationResult result = GunpackOperator.setEnabled(pack, enable);
         this.statusMessage = result.message();
@@ -270,68 +346,125 @@ public class GunpackManagerScreen extends Screen {
             return;
         }
         onlineSearching = true;
-        String query = onlineSearchBox != null ? onlineSearchBox.getValue() : "tacz";
+        String query = onlineSearchBox != null ? onlineSearchBox.getValue() : "";
         this.statusMessage = Component.translatable("gui.gun_management.searching").getString();
 
-        ModrinthClient.searchGunpacksAsync(query, 25, 0).whenComplete((projects, err) ->
-                Minecraft.getInstance().execute(() -> {
-                    onlineSearching = false;
-                    if (err != null) {
-                        this.statusMessage = "Search error: " + err.getMessage();
-                        return;
-                    }
-                    this.onlineProjects = projects != null ? projects : List.of();
-                    this.statusMessage = Component.translatable("gui.gun_management.found_count",
-                            this.onlineProjects.size()).getString();
-                    if (onlineList != null) {
-                        onlineList.setProjects(this.onlineProjects);
-                    }
-                })
-        );
+        if (onlineSource == OnlineSource.MODRINTH) {
+            ModrinthClient.searchGunpacksAsync(query, 25, 0).whenComplete((projects, err) ->
+                    Minecraft.getInstance().execute(() -> handleSearchResult(
+                            projects == null ? List.of() : projects.stream()
+                                    .map(p -> new OnlineEntry(p, null)).toList(),
+                            err)));
+        } else {
+            GitHubClient.searchTaczReposAsync(query, 25).whenComplete((repos, err) ->
+                    Minecraft.getInstance().execute(() -> handleSearchResult(
+                            repos == null ? List.of() : repos.stream()
+                                    .map(r -> new OnlineEntry(null, r)).toList(),
+                            err)));
+        }
     }
 
-    private void installSelectedProject() {
-        if (selectedProject == null || downloading) {
+    private void handleSearchResult(List<OnlineEntry> entries, @Nullable Throwable err) {
+        onlineSearching = false;
+        if (err != null) {
+            Throwable cause = err.getCause() != null ? err.getCause() : err;
+            this.statusMessage = "Search error: " + cause.getMessage();
             return;
         }
-        ModrinthClient.ModrinthProject project = selectedProject;
-        downloading = true;
-        if (installButton != null) {
-            installButton.active = false;
+        this.onlineEntries = entries;
+        this.selectedOnline = null;
+        this.statusMessage = Component.translatable("gui.gun_management.found_count", entries.size()).getString();
+        if (onlineList != null) {
+            onlineList.setEntries(entries);
         }
+        updateInstallButton();
+    }
+
+    private void onSelectOnlineEntry(OnlineEntry entry) {
+        this.selectedOnline = entry;
+        if (entry.github() != null) {
+            String fullName = entry.github().fullName();
+            if (!githubDetailsCache.containsKey(fullName)) {
+                GitHubClient.fetchRepoDetailsAsync(entry.github()).thenAccept(details ->
+                        Minecraft.getInstance().execute(() -> {
+                            githubDetailsCache.put(fullName, details);
+                            updateInstallButton();
+                        }));
+            }
+        }
+        updateInstallButton();
+    }
+
+    private void installSelected() {
+        if (selectedOnline == null || downloading) {
+            return;
+        }
+        if (selectedOnline.modrinth() != null) {
+            installModrinthProject(selectedOnline.modrinth());
+        } else if (selectedOnline.github() != null) {
+            installGitHubRepo(selectedOnline.github());
+        }
+    }
+
+    private void installModrinthProject(ModrinthClient.ModrinthProject project) {
+        downloading = true;
+        updateInstallButton();
         this.statusMessage = Component.translatable("gui.gun_management.resolving", project.title()).getString();
 
         ModrinthClient.getLatestCompatibleVersionAsync(project.projectId())
                 .thenCompose(optVersion -> {
                     if (optVersion.isEmpty()) {
-                        throw new RuntimeException("No compatible 1.21.1 file found for " + project.title());
+                        throw new RuntimeException("No compatible .zip gunpack found for " + project.title());
                     }
-                    ModrinthClient.ModrinthVersion version = optVersion.get();
-                    return ModrinthClient.downloadAndInstallAsync(version, GunpackPaths.getTaczDir(),
-                            (done, total) -> Minecraft.getInstance().execute(() -> {
-                                if (total > 0) {
-                                    int pct = (int) Math.min(100, (done * 100) / total);
-                                    this.statusMessage = String.format("Downloading %s... %d%%", project.title(), pct);
-                                } else {
-                                    this.statusMessage = String.format("Downloading %s... %d KB", project.title(), done / 1024);
-                                }
-                            }));
+                    return ModrinthClient.downloadAndInstallAsync(optVersion.get(), GunpackPaths.getTaczDir(),
+                            (done, total) -> updateDownloadProgress(project.title(), done, total));
                 })
-                .whenComplete((path, err) -> Minecraft.getInstance().execute(() -> {
-                    downloading = false;
-                    if (installButton != null) {
-                        installButton.active = (selectedProject != null);
-                    }
-                    if (err != null) {
-                        Throwable cause = err.getCause() != null ? err.getCause() : err;
-                        this.statusMessage = "Install failed: " + cause.getMessage();
-                        return;
-                    }
-                    this.statusMessage = Component.translatable("gui.gun_management.installed_reloading",
-                            path.getFileName().toString()).getString();
-                    GunpackOperator.reloadAllPacks().thenRun(() ->
-                            Minecraft.getInstance().execute(this::refreshLocalPacks));
-                }));
+                .whenComplete((path, err) -> finishInstall(path, err));
+    }
+
+    private void installGitHubRepo(GitHubClient.GitHubRepo repo) {
+        GitHubClient.RepoDetails details = githubDetailsCache.get(repo.fullName());
+        if (details == null || details.zipAssets().isEmpty()) {
+            this.statusMessage = Component.translatable("gui.gun_management.github.no_zip").getString();
+            return;
+        }
+        GitHubClient.GunpackZipAsset asset = details.zipAssets().get(0);
+        downloading = true;
+        updateInstallButton();
+        this.statusMessage = Component.translatable("gui.gun_management.resolving", asset.fileName()).getString();
+
+        GitHubClient.downloadAndInstallAsync(asset, githubMirror, GunpackPaths.getTaczDir(),
+                        (done, total) -> updateDownloadProgress(asset.fileName(), done, total))
+                .whenComplete((path, err) -> finishInstall(path, err));
+    }
+
+    private void updateDownloadProgress(String name, long done, long total) {
+        Minecraft.getInstance().execute(() -> {
+            if (total > 0) {
+                int pct = (int) Math.min(100, (done * 100) / total);
+                this.statusMessage = String.format("Downloading %s... %d%%", name, pct);
+            } else {
+                this.statusMessage = String.format("Downloading %s... %d KB", name, done / 1024);
+            }
+        });
+    }
+
+    private void finishInstall(@Nullable Path path, @Nullable Throwable err) {
+        Minecraft.getInstance().execute(() -> {
+            downloading = false;
+            updateInstallButton();
+            if (err != null) {
+                Throwable cause = err.getCause() != null ? err.getCause() : err;
+                this.statusMessage = "Install failed: " + cause.getMessage();
+                return;
+            }
+            if (path != null) {
+                this.statusMessage = Component.translatable("gui.gun_management.installed_reloading",
+                        path.getFileName().toString()).getString();
+            }
+            GunpackOperator.reloadAllPacks().thenRun(() ->
+                    Minecraft.getInstance().execute(this::refreshLocalPacks));
+        });
     }
 
     @Override
@@ -351,9 +484,11 @@ public class GunpackManagerScreen extends Screen {
         }
 
         if (!statusMessage.isBlank()) {
+            int msgX = currentTab == Tab.LOCAL ? 322 : (onlineList != null ? onlineList.getLeft() + onlineList.getWidth() + 180 : 322);
+            int maxW = Math.max(80, this.width - msgX - 84);
             graphics.drawString(this.font,
-                    this.font.plainSubstrByWidth(statusMessage, this.width - 420),
-                    322, this.height - 22, 0xDDDD88, false);
+                    this.font.plainSubstrByWidth(statusMessage, maxW),
+                    msgX, this.height - 22, 0xDDDD88, false);
         }
     }
 
@@ -364,7 +499,7 @@ public class GunpackManagerScreen extends Screen {
         int drawerH = onlineList.getBottom() - onlineList.getTop();
 
         graphics.fill(drawerX, drawerY, drawerX + drawerW, drawerY + drawerH, 0x66000000);
-        if (selectedProject == null) {
+        if (selectedOnline == null) {
             graphics.drawString(this.font,
                     Component.translatable("gui.gun_management.select_project"),
                     drawerX + 8, drawerY + 10, 0xAAAAAA, false);
@@ -373,20 +508,47 @@ public class GunpackManagerScreen extends Screen {
 
         int y = drawerY + 8;
         graphics.drawString(this.font,
-                this.font.plainSubstrByWidth(selectedProject.title(), drawerW - 16),
+                this.font.plainSubstrByWidth(selectedOnline.title(), drawerW - 16),
                 drawerX + 8, y, 0xFFFFFF, false);
         y += 14;
         graphics.drawString(this.font,
-                "Author: " + selectedProject.author(),
+                this.font.plainSubstrByWidth(selectedOnline.subtitle(), drawerW - 16),
                 drawerX + 8, y, 0xAAAAAA, false);
-        y += 12;
-        graphics.drawString(this.font,
-                "Downloads: " + selectedProject.downloads(),
-                drawerX + 8, y, 0xAAAAAA, false);
-        y += 16;
-        graphics.drawWordWrap(this.font,
-                Component.literal(selectedProject.description()),
-                drawerX + 8, y, drawerW - 16, 0xCCCCCC);
+        y += 14;
+
+        if (selectedOnline.modrinth() != null) {
+            graphics.drawWordWrap(this.font,
+                    Component.literal(selectedOnline.modrinth().description()),
+                    drawerX + 8, y, drawerW - 16, 0xCCCCCC);
+        } else if (selectedOnline.github() != null) {
+            GitHubClient.RepoDetails details = githubDetailsCache.get(selectedOnline.github().fullName());
+            if (details == null) {
+                graphics.drawString(this.font,
+                        Component.translatable("gui.gun_management.github.loading_details"),
+                        drawerX + 8, y, 0xDDDD88, false);
+                return;
+            }
+            if (!details.zipAssets().isEmpty()) {
+                GitHubClient.GunpackZipAsset zip = details.zipAssets().get(0);
+                String zipLine = "ZIP: " + zip.fileName() + " (" + zip.sourceLabel() + ")";
+                graphics.drawString(this.font,
+                        this.font.plainSubstrByWidth(zipLine, drawerW - 16),
+                        drawerX + 8, y, 0x88FF88, false);
+            } else {
+                graphics.drawString(this.font,
+                        Component.translatable("gui.gun_management.github.no_zip"),
+                        drawerX + 8, y, 0xFF8888, false);
+            }
+            y += 14;
+            String body = !details.filteredReadme().isBlank()
+                    ? details.filteredReadme()
+                    : selectedOnline.github().description();
+            if (!body.isBlank()) {
+                graphics.drawWordWrap(this.font,
+                        Component.literal(body),
+                        drawerX + 8, y, drawerW - 16, 0xCCCCCC);
+            }
+        }
     }
 
     @Override
@@ -396,15 +558,15 @@ public class GunpackManagerScreen extends Screen {
         }
     }
 
-    private class ModrinthListWidget extends ObjectSelectionList<ModrinthListWidget.ProjectEntry> {
-        public ModrinthListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
+    private class OnlineListWidget extends ObjectSelectionList<OnlineListWidget.Entry> {
+        public OnlineListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
             super(mc, width, height, y, y + height, itemHeight);
         }
 
-        public void setProjects(List<ModrinthClient.ModrinthProject> projects) {
+        public void setEntries(List<OnlineEntry> items) {
             clearEntries();
-            for (ModrinthClient.ModrinthProject project : projects) {
-                addEntry(new ProjectEntry(project));
+            for (OnlineEntry item : items) {
+                addEntry(new Entry(item));
             }
         }
 
@@ -418,11 +580,11 @@ public class GunpackManagerScreen extends Screen {
             return this.x0 + this.width - 6;
         }
 
-        private class ProjectEntry extends ObjectSelectionList.Entry<ProjectEntry> {
-            private final ModrinthClient.ModrinthProject project;
+        private class Entry extends ObjectSelectionList.Entry<Entry> {
+            private final OnlineEntry item;
 
-            private ProjectEntry(ModrinthClient.ModrinthProject project) {
-                this.project = project;
+            private Entry(OnlineEntry item) {
+                this.item = item;
             }
 
             @Override
@@ -442,30 +604,27 @@ public class GunpackManagerScreen extends Screen {
                 int iconX = left + 4;
                 int iconY = top + (height - iconSize) / 2;
 
-                ResourceLocation icon = PackIconCache.getOrLoadRemote(project.iconUrl());
+                ResourceLocation icon = PackIconCache.getOrLoadRemote(item.iconUrl());
                 if (icon != null) {
                     graphics.blit(icon, iconX, iconY, 0, 0, iconSize, iconSize, iconSize, iconSize);
                 } else {
-                    graphics.fill(iconX, iconY, iconX + iconSize, iconY + iconSize, 0xFF2D3E50);
-                    String initial = project.title().isEmpty() ? "M" : project.title().substring(0, 1).toUpperCase();
+                    int bg = item.github() != null ? 0xFF24292E : 0xFF2D3E50;
+                    graphics.fill(iconX, iconY, iconX + iconSize, iconY + iconSize, bg);
+                    String initial = item.title().isEmpty() ? "?" : item.title().substring(0, 1).toUpperCase();
                     graphics.drawCenteredString(font, initial, iconX + iconSize / 2, iconY + 10, 0xFFFFFFFF);
                 }
 
                 int textX = iconX + iconSize + 6;
                 int maxW = Math.max(40, width - iconSize - 16);
-                graphics.drawString(font, font.plainSubstrByWidth(project.title(), maxW), textX, top + 4, 0xFFFFFF, false);
-                String sub = project.author() + " | " + project.downloads() + " DL";
-                graphics.drawString(font, font.plainSubstrByWidth(sub, maxW), textX, top + 18, 0xAAAAAA, false);
+                graphics.drawString(font, font.plainSubstrByWidth(item.title(), maxW), textX, top + 4, 0xFFFFFF, false);
+                graphics.drawString(font, font.plainSubstrByWidth(item.subtitle(), maxW), textX, top + 18, 0xAAAAAA, false);
             }
 
             @Override
             public boolean mouseClicked(double mouseX, double mouseY, int button) {
                 if (button == 0) {
-                    ModrinthListWidget.this.setSelected(this);
-                    selectedProject = project;
-                    if (installButton != null) {
-                        installButton.active = !downloading;
-                    }
+                    OnlineListWidget.this.setSelected(this);
+                    onSelectOnlineEntry(item);
                     return true;
                 }
                 return false;
@@ -473,7 +632,7 @@ public class GunpackManagerScreen extends Screen {
 
             @Override
             public Component getNarration() {
-                return Component.literal(project.title());
+                return Component.literal(item.title());
             }
         }
     }
