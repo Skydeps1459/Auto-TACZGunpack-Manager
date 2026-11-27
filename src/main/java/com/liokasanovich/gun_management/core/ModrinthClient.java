@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -79,6 +80,26 @@ public final class ModrinthClient {
         void onProgress(long downloadedBytes, long totalBytes);
     }
 
+    private static final Set<String> EXCLUDED_SLUGS = Set.of(
+            "timeless-and-classics-zero",
+            "tacz-1.21.1",
+            "tacz-refabricated",
+            "tacz-tweaks",
+            "tacz-tes-compat",
+            "taczcurios",
+            "tacz-chamber-clarity",
+            "combat-sense",
+            "shots-fired",
+            "gd656frontvoice",
+            "tacz-bullet-proof-enchant-add-on",
+            "precise-manufacturing",
+            "tacza",
+            "ironsarms",
+            "arsarms",
+            "tacz-loot",
+            "tacz-structure-loot"
+    );
+
     private ModrinthClient() {
     }
 
@@ -86,18 +107,16 @@ public final class ModrinthClient {
         String trimmed = query == null ? "" : query.trim();
         boolean isDefault = trimmed.isEmpty();
         String effectiveQuery = isDefault
-                ? "tacz gunpack"
+                ? "tacz"
                 : (trimmed.toLowerCase(Locale.ROOT).contains("tacz") ? trimmed : "tacz " + trimmed);
         String sortIndex = isDefault ? "downloads" : "relevance";
 
+        // Relaxed Modrinth search: do not restrict project_type so gunpacks tagged as 'mod' also appear.
         String encodedQuery = URLEncoder.encode(effectiveQuery, StandardCharsets.UTF_8);
-        String encodedFacets = URLEncoder.encode(
-                "[[\"project_type:datapack\",\"project_type:resourcepack\"]]",
-                StandardCharsets.UTF_8);
+        int fetchLimit = Math.min(100, Math.max(limit, 50));
         String url = API_BASE + "/search?query=" + encodedQuery
-                + "&facets=" + encodedFacets
                 + "&index=" + sortIndex
-                + "&limit=" + limit
+                + "&limit=" + fetchLimit
                 + "&offset=" + offset;
 
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
@@ -116,8 +135,9 @@ public final class ModrinthClient {
                     if (root != null && root.has("hits") && root.get("hits").isJsonArray()) {
                         for (JsonElement el : root.getAsJsonArray("hits")) {
                             JsonObject obj = el.getAsJsonObject();
-                            String slug = getString(obj, "slug", "");
-                            if ("timeless-and-classics-zero".equals(slug)) {
+                            String slug = getString(obj, "slug", "").toLowerCase(Locale.ROOT);
+                            String projectType = getString(obj, "project_type", "");
+                            if ("modpack".equals(projectType) || EXCLUDED_SLUGS.contains(slug)) {
                                 continue;
                             }
                             list.add(new ModrinthProject(
@@ -131,6 +151,9 @@ public final class ModrinthClient {
                                     getString(obj, "date_modified", ""),
                                     getNullableString(obj, "latest_version")
                             ));
+                            if (list.size() >= limit) {
+                                break;
+                            }
                         }
                     }
                     return list;

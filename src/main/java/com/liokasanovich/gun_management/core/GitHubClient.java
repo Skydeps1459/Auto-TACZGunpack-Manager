@@ -144,11 +144,16 @@ public final class GitHubClient {
                     if (root != null && root.has("items") && root.get("items").isJsonArray()) {
                         for (JsonElement el : root.getAsJsonArray("items")) {
                             JsonObject obj = el.getAsJsonObject();
+                            String fullName = getString(obj, "full_name", "");
+                            String repoName = getString(obj, "name", "");
+                            if (isExcludedRepo(fullName, repoName)) {
+                                continue;
+                            }
                             JsonObject ownerObj = obj.has("owner") && obj.get("owner").isJsonObject()
                                     ? obj.getAsJsonObject("owner") : null;
                             results.add(new GitHubRepo(
-                                    getString(obj, "full_name", ""),
-                                    getString(obj, "name", ""),
+                                    fullName,
+                                    repoName,
                                     ownerObj != null ? getString(ownerObj, "login", "Unknown") : "Unknown",
                                     getString(obj, "description", ""),
                                     ownerObj != null ? getNullableString(ownerObj, "avatar_url") : null,
@@ -194,16 +199,20 @@ public final class GitHubClient {
     }
 
     /**
-     * Strips markdown badges, HTML tags, and noisy formatting so README text reads cleanly in-game.
+     * Strips code blocks, markdown badges, tables, URLs, HTML tags, and noisy formatting
+     * so README text reads cleanly in-game.
      */
     public static String filterReadmeText(String markdown) {
         if (markdown == null || markdown.isBlank()) {
             return "";
         }
         String text = markdown
+                .replaceAll("(?s)```.*?```", "")
                 .replaceAll("!\\[[^\\]]*\\]\\([^)]*\\)", "")
                 .replaceAll("\\[([^\\]]+)\\]\\([^)]*\\)", "$1")
+                .replaceAll("https?://\\S+", "")
                 .replaceAll("<[^>]+>", "")
+                .replaceAll("(?m)^\\s*\\|.*\\|\\s*$", "")
                 .replaceAll("(?m)^#{1,6}\\s*", "")
                 .replaceAll("[`*_~>]+", "")
                 .replaceAll("(?m)^\\s*[-=]{3,}\\s*$", "")
@@ -307,12 +316,30 @@ public final class GitHubClient {
                 .exceptionally(ex -> List.of());
     }
 
+    private static boolean isExcludedRepo(String fullName, String repoName) {
+        String lowerFull = fullName.toLowerCase(Locale.ROOT);
+        String lowerName = repoName.toLowerCase(Locale.ROOT);
+        return lowerFull.equals("mcmodderanchor/tacz")
+                || lowerFull.equals("skydeps1459/auto-taczgunpack-manager")
+                || lowerName.equals("tacz")
+                || lowerName.contains("wiki")
+                || lowerName.contains("docs");
+    }
+
     private static boolean isGunpackZipName(String fileName) {
         String lower = fileName.toLowerCase(Locale.ROOT);
         if (!lower.endsWith(".zip")) {
             return false;
         }
-        return !lower.contains("source") && !lower.contains("javadoc") && !lower.contains("src");
+        return !lower.contains("source")
+                && !lower.contains("javadoc")
+                && !lower.contains("src")
+                && !lower.contains("-dev")
+                && !lower.contains("-api")
+                && !lower.contains("installer")
+                && !lower.contains("windows")
+                && !lower.contains("linux")
+                && !lower.contains("macos");
     }
 
     public static CompletableFuture<Path> downloadAndInstallAsync(
