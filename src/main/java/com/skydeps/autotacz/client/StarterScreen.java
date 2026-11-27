@@ -61,6 +61,9 @@ public final class StarterScreen extends Screen {
     @Nullable
     private List<UpdateApplier.ApplyResult> applyResults;
 
+    /** 是否已因「无更新且 autoContinue 开启」自动放行，避免每帧重复调度。 */
+    private boolean autoProceeded;
+
     public StarterScreen(UpdateChecker checker, UpdateApplier applier) {
         super(Component.translatable("autotacz.starter.title"));
         this.checker = checker;
@@ -101,6 +104,24 @@ public final class StarterScreen extends Screen {
         if (primaryButton == null || secondaryButton == null) {
             return;
         }
+
+        // 无更新且开启了 autoContinue：不弹空窗口，直接放行进游戏。
+        // 放在这里而不是 init()，是因为检查是异步的——init 时状态通常还是
+        // IDLE，只有刷新时才知道结果。autoProceeded 保证只调度一次。
+        if (!autoProceeded && !applying && applyResults == null
+                && checker.canProceedAutomatically()) {
+            autoProceeded = true;
+            // 不能在 render 过程中直接 setScreen：那会在遍历 renderables 时
+            // 换掉整个界面。投递到下一 tick 执行。
+            if (minecraft != null) {
+                minecraft.execute(this::enterGame);
+            }
+            return;
+        }
+        if (autoProceeded) {
+            return;
+        }
+
         UpdateChecker.Status status = checker.status();
 
         switch (status) {

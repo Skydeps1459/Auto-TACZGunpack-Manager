@@ -10,7 +10,7 @@ import java.util.Locale;
  *
  * <p>把「查什么」与「怎么查」分离：{@link GunpackIndex} 只负责执行，
  * 调用方（命令、GUI、脚本）只负责构造条件。新增筛选维度时
- * 只需在这里加字段并更新 {@link #matches}，索引与入口都不用改。
+ * 只需在这里加字段并更新 {@code GunpackIndex#matches} 的判定，索引与入口都不用改。
  *
  * <p>所有文本条件均为「忽略大小写的子串匹配」；多个条件之间是 <b>AND</b> 关系。
  *

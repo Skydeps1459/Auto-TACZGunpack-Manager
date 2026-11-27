@@ -132,7 +132,25 @@ class UpdateCheckerTest {
     }
 
     @Test
-    @DisplayName("把网络失败单独区分，不打成代码错误")
+    @DisplayName("无更新时受 autoContinue 控制是否自动放行")
+    void autoProceedRespectsAutoContinueFlag(@TempDir Path gameDir) {
+        // 没有本地枪包 -> 无需联网即判定 DONE 且无候选
+        StarterConfig on = new StarterConfig(true, DEAD_URL, List.of("mw4"), 3, true);
+        UpdateChecker auto = isolated(on, gameDir.resolve("tacz"));
+        auto.run();
+        assertEquals(UpdateChecker.Status.DONE, auto.status());
+        assertTrue(auto.canProceedAutomatically(), "autoContinue=true 且无候选时应自动进入游戏");
+
+        StarterConfig off = new StarterConfig(true, DEAD_URL, List.of("mw4"), 3, false);
+        UpdateChecker manual = isolated(off, gameDir.resolve("tacz"));
+        manual.run();
+        assertEquals(UpdateChecker.Status.DONE, manual.status());
+        assertFalse(manual.canProceedAutomatically(),
+                "autoContinue=false 时必须停在窗口等用户点「进入游戏」");
+    }
+
+    @Test
+    @DisplayName("网络失败单独区分，不打成代码错误")
     void networkFailureHasDedicatedType() {
         UpdateChecker.NetworkFailure failure = new UpdateChecker.NetworkFailure("没网");
         assertTrue(failure instanceof IOException);
