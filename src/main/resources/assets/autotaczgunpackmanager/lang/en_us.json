@@ -1,0 +1,12 @@
+{
+  "itemGroup.autotaczgunpackmanager": "Auto TACZ Gunpack Manager",
+  "autotacz.starter.title": "TACZ Gunpack Update Check",
+  "autotacz.starter.checking": "Checking...",
+  "autotacz.starter.enter": "Enter Game",
+  "autotacz.starter.skip": "Skip Check",
+  "autotacz.starter.skip.enter": "Skip and Enter",
+  "autotacz.starter.update": "Update Selected (%s)",
+  "autotacz.starter.refresh": "Check Again",
+  "autotacz.starter.retry": "Retry",
+  "autotacz.starter.none": "All gunpacks are up to date"
+}

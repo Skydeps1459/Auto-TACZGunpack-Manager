@@ -13,6 +13,39 @@
 
 当前实现状态：以上四项均已可用，入口为游戏内命令 `/taczpack`。
 
+## 前置模组
+
+**必需：TACZ 本体（Timeless and Classics Zero）**
+
+| 项 | 值 |
+|---|---|
+| modId | `tacz` |
+| 最低版本 | `1.1.0`（`mandatory = true`） |
+| 适用平台 | Forge 1.20.1 |
+
+本模组管理的对象就是 `tacz/` 目录下的枪包；没有 TACZ 时这些文件不会被游戏读取，
+功能无从谈起。因此依赖声明为**必需**而非可选——缺少 TACZ 时 Forge 会直接拒绝启动，
+并明确提示「requires tacz 1.1.0 or above / Currently, tacz is not installed」。
+
+> 版本号依据 TACZ jar 的 `Implementation-Version`（形如 `1.1.8`），
+> **不是**文件名里的 `1.20.1-1.1.8`。实测 1.1.4 / 1.1.6 / 1.1.8 / 1.2.0 均可满足。
+
+### 开发环境中的 TACZ
+
+真实 TACZ **无法**在 official mappings 的开发环境加载：它的 mixin 把 SRG 名硬编码
+在字节码里（如 `@Shadow` 字段 `f_9743_`），而 `@Shadow` 不走 refmap 重映射，
+必然抛 `InvalidMixinException`。`fg.deobf` 也不解决——`@Shadow` 名不会被重写。
+
+但本项目**零处 import `com.tacz`**（只操作文件系统，不调用 TACZ API），
+所以 TACZ 只是发布层面的前置。开发期用 Gradle 任务自动生成一个空壳 mod 满足声明：
+
+```bash
+./gradlew generateTaczDevStub    # 产物写入 run/mods/tacz-dev-stub.jar
+```
+
+`runClient` / `runServer` / `runData` 会自动依赖该任务，无需手动执行。
+占位模组只有 1KB，不含任何 TACZ 代码，**不要分发**，也不要与真实 TACZ 同时放进 `mods/`。
+
 ## 开发环境
 
 | 项 | 版本 |
