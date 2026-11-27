@@ -57,6 +57,10 @@ public final class GunManagerCommand {
     }
 
     private static int togglePack(CommandContext<CommandSourceStack> ctx, boolean enable) {
+        if (!enable) {
+            ctx.getSource().sendFailure(Component.translatable("gui.gun_management.disable_in_world_blocked"));
+            return 0;
+        }
         String namespace = StringArgumentType.getString(ctx, "namespace");
         Path taczDir = GunpackPaths.getTaczDir();
         Set<Path> pending = GunpackOperator.getPendingRestartPaths(taczDir);

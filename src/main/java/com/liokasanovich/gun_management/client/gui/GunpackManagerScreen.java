@@ -300,12 +300,16 @@ public class GunpackManagerScreen extends Screen {
         updateTransferButtons();
     }
 
+    private boolean isInWorld() {
+        return this.minecraft != null && this.minecraft.level != null;
+    }
+
     private void updateTransferButtons() {
         if (enableButton != null && disabledList != null) {
             enableButton.active = disabledList.getSelectedPack() != null;
         }
         if (disableButton != null && enabledList != null) {
-            disableButton.active = enabledList.getSelectedPack() != null;
+            disableButton.active = !isInWorld() && enabledList.getSelectedPack() != null;
         }
     }
 
@@ -326,6 +330,10 @@ public class GunpackManagerScreen extends Screen {
     }
 
     private void togglePack(GunpackInfo pack, boolean enable) {
+        if (!enable && isInWorld()) {
+            this.statusMessage = Component.translatable("gui.gun_management.disable_in_world_blocked").getString();
+            return;
+        }
         GunpackOperator.OperationResult result = GunpackOperator.setEnabled(pack, enable);
         this.statusMessage = result.message();
         refreshLocalPacks();

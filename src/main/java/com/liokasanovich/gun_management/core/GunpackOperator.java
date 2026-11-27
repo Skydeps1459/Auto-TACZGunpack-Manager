@@ -198,22 +198,40 @@ public final class GunpackOperator {
     private static final class ClientReloadBridge {
         private static CompletableFuture<Void> reload() {
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-            // Do NOT call ClientAssetsManager.reloadAllPack() on the render thread:
-            // it blocks on reloadResourcePacks().get() and deadlocks the render thread.
-            CompletableFuture<CompletableFuture<Void>> scheduled = new CompletableFuture<>();
-            mc.execute(() -> {
-                try {
-                    scheduled.complete(mc.reloadResourcePacks());
-                } catch (Throwable t) {
-                    scheduled.completeExceptionally(t);
+
+            // Step 1: If an integrated server is running, reload server datapacks/gunpacks first
+            // and await completion so CommonGunIndex & ServerMessageSyncGunPack are up-to-date.
+            CompletableFuture<Void> serverReload = CompletableFuture.completedFuture(null);
+            var server = ServerLifecycleHooks.getCurrentServer();
+            if (server != null) {
+                serverReload = server.submit(() -> {
+                    var packRepo = server.getPackRepository();
+                    packRepo.reload();
+                    return server.reloadResources(packRepo.getSelectedIds());
+                }).thenCompose(f -> f);
+            }
+
+            // Step 2: Reload client resource packs without blocking the render thread.
+            return serverReload.thenCompose(ignored -> {
+                CompletableFuture<CompletableFuture<Void>> scheduled = new CompletableFuture<>();
+                mc.execute(() -> {
+                    try {
+                        scheduled.complete(mc.reloadResourcePacks());
+                    } catch (Throwable t) {
+                        scheduled.completeExceptionally(t);
+                    }
+                });
+                return scheduled.thenCompose(f -> f);
+            }).thenRun(() -> mc.execute(() -> {
+                // Step 3: Force-rebuild CreativeModeTabs so newly added gunpacks appear in-game immediately.
+                if (mc.player != null && mc.level != null) {
+                    var features = mc.player.connection.enabledFeatures();
+                    boolean opTab = mc.options.operatorItemsTab().get() && mc.player.canUseGameMasterBlocks();
+                    var registries = mc.level.registryAccess();
+                    net.minecraft.world.item.CreativeModeTabs.tryRebuildTabContents(features, !opTab, registries);
+                    net.minecraft.world.item.CreativeModeTabs.tryRebuildTabContents(features, opTab, registries);
                 }
-            });
-            return scheduled.thenCompose(f -> f).thenRun(() -> {
-                if (ServerLifecycleHooks.getCurrentServer() != null) {
-                    var server = ServerLifecycleHooks.getCurrentServer();
-                    server.submit(CommonAssetsManager::reloadAllPack).join();
-                }
-            });
+            }));
         }
     }
 
