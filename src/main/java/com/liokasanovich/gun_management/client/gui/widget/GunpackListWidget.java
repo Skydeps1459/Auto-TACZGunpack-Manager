@@ -32,6 +32,8 @@ public class GunpackListWidget extends ObjectSelectionList<GunpackListWidget.Ent
             Consumer<GunpackInfo> onDoubleClick
     ) {
         super(mc, width, height, y, y + height, itemHeight);
+        this.setRenderBackground(false);
+        this.setRenderTopAndBottom(false);
         this.onSelect = onSelect;
         this.onDoubleClick = onDoubleClick;
     }

@@ -470,6 +470,15 @@ public class GunpackManagerScreen extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         this.renderBackground(graphics);
+        if (currentTab == Tab.LOCAL && disabledList != null && enabledList != null) {
+            graphics.fill(disabledList.getLeft(), disabledList.getTop(),
+                    disabledList.getRight(), disabledList.getBottom(), 0x55000000);
+            graphics.fill(enabledList.getLeft(), enabledList.getTop(),
+                    enabledList.getRight(), enabledList.getBottom(), 0x55000000);
+        } else if (currentTab == Tab.ONLINE && onlineList != null) {
+            graphics.fill(onlineList.getLeft(), onlineList.getTop(),
+                    onlineList.getRight(), onlineList.getBottom(), 0x55000000);
+        }
         super.render(graphics, mouseX, mouseY, partialTick);
 
         if (currentTab == Tab.LOCAL && disabledList != null && enabledList != null) {
@@ -575,6 +584,8 @@ public class GunpackManagerScreen extends Screen {
     private class OnlineListWidget extends ObjectSelectionList<OnlineListWidget.Entry> {
         public OnlineListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
             super(mc, width, height, y, y + height, itemHeight);
+            this.setRenderBackground(false);
+            this.setRenderTopAndBottom(false);
         }
 
         public void setEntries(List<OnlineEntry> items) {
