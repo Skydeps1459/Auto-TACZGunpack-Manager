@@ -25,6 +25,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Asynchronous Modrinth REST API v2 client for searching, resolving, and downloading TaCZ gunpacks.
@@ -35,7 +37,14 @@ public final class ModrinthClient {
     private static final String USER_AGENT = "GunManagement/0.1.0 (Minecraft 1.21.1 NeoForge)";
     private static final Gson GSON = new Gson();
 
+    private static final ExecutorService IO_EXECUTOR = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "GunManagement-Modrinth");
+        t.setDaemon(true);
+        return t;
+    });
+
     private static final HttpClient HTTP = HttpClient.newBuilder()
+            .executor(IO_EXECUTOR)
             .connectTimeout(Duration.ofSeconds(15))
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
@@ -195,16 +204,21 @@ public final class ModrinthClient {
 
                 long contentLength = resp.headers().firstValueAsLong("Content-Length").orElse(version.fileSize());
                 long downloaded = 0L;
+                long lastNotifyNanos = 0L;
 
                 try (InputStream in = resp.body();
                      OutputStream out = Files.newOutputStream(partFile)) {
-                    byte[] buffer = new byte[16384];
+                    byte[] buffer = new byte[32768];
                     int read;
                     while ((read = in.read(buffer)) != -1) {
                         out.write(buffer, 0, read);
                         downloaded += read;
                         if (progressListener != null) {
-                            progressListener.onProgress(downloaded, contentLength);
+                            long now = System.nanoTime();
+                            if (now - lastNotifyNanos >= 100_000_000L || (contentLength > 0 && downloaded >= contentLength)) {
+                                lastNotifyNanos = now;
+                                progressListener.onProgress(downloaded, contentLength);
+                            }
                         }
                     }
                 }
@@ -229,7 +243,7 @@ public final class ModrinthClient {
                 }
                 throw new RuntimeException("Failed to download " + version.fileName() + ": " + e.getMessage(), e);
             }
-        });
+        }, IO_EXECUTOR);
     }
 
     public static CompletableFuture<byte[]> downloadBytesAsync(String url) {

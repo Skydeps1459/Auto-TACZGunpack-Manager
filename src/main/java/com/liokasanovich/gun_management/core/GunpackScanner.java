@@ -23,8 +23,12 @@ import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -38,6 +42,15 @@ public final class GunpackScanner {
     private static final Gson GSON = new Gson();
     private static final String META_FILE = "gunpack.meta.json";
     private static final String INFO_FILE = "gunpack_info.json";
+    private static final Map<Path, CachedZipEntry> ZIP_CACHE = new ConcurrentHashMap<>();
+    private static final ExecutorService SCAN_EXECUTOR = Executors.newFixedThreadPool(2, r -> {
+        Thread t = new Thread(r, "GunManagement-Scanner");
+        t.setDaemon(true);
+        return t;
+    });
+
+    private record CachedZipEntry(long size, long lastModifiedMillis, GunpackInfo info) {
+    }
 
     private GunpackScanner() {
     }
@@ -47,7 +60,7 @@ public final class GunpackScanner {
     }
 
     public static CompletableFuture<List<GunpackInfo>> scanAllAsync(Path taczDir, Set<Path> pendingRestartPaths) {
-        return CompletableFuture.supplyAsync(() -> scanAll(taczDir, pendingRestartPaths));
+        return CompletableFuture.supplyAsync(() -> scanAll(taczDir, pendingRestartPaths), SCAN_EXECUTOR);
     }
 
     public static List<GunpackInfo> scanAll() {
@@ -136,6 +149,23 @@ public final class GunpackScanner {
 
     @Nullable
     private static GunpackInfo parseZipPack(Path zipPath, boolean enabled, boolean pendingRestart) {
+        Path normalized = zipPath.toAbsolutePath().normalize();
+        try {
+            long size = Files.size(zipPath);
+            long mtime = Files.getLastModifiedTime(zipPath).toMillis();
+            CachedZipEntry cached = ZIP_CACHE.get(normalized);
+            if (cached != null && cached.size() == size && cached.lastModifiedMillis() == mtime) {
+                GunpackInfo c = cached.info();
+                return new GunpackInfo(
+                        c.namespace(), c.displayName(), c.version(), c.description(),
+                        c.authors(), c.license(), c.logoPath(), zipPath, false,
+                        enabled, pendingRestart, c.gunCount(), c.ammoCount(), c.attachmentCount(),
+                        c.sha256(), c.fileSizeBytes()
+                );
+            }
+        } catch (IOException ignored) {
+        }
+
         try (ZipFile zipFile = new ZipFile(zipPath.toFile(), StandardCharsets.UTF_8)) {
             ZipEntry metaEntry = zipFile.getEntry(META_FILE);
             if (metaEntry == null) {
@@ -185,9 +215,10 @@ public final class GunpackScanner {
             }
 
             long size = Files.size(zipPath);
+            long mtime = Files.getLastModifiedTime(zipPath).toMillis();
             String sha256 = computeSha256(zipPath);
 
-            return new GunpackInfo(
+            GunpackInfo info = new GunpackInfo(
                     namespace,
                     details.displayName(namespace),
                     details.version,
@@ -205,6 +236,8 @@ public final class GunpackScanner {
                     sha256,
                     size
             );
+            ZIP_CACHE.put(normalized, new CachedZipEntry(size, mtime, info));
+            return info;
         } catch (IOException e) {
             LOGGER.warn("Failed to read zip gunpack {}: {}", zipPath, e.getMessage());
             return null;
