@@ -1,0 +1,16 @@
+{
+  "_comment": "Auto-TACZGunpack-Manager 远程枪包清单。字段说明见 README 的「远程源格式」一节。",
+  "_note": "namespace 与 url 为必需字段；sha256 可选，提供后会强制校验。本文件是严格 JSON，便于工具与 CI 校验。",
+  "_updated": "2026-11-27",
+  "packs": [
+    {
+      "namespace": "mw4",
+      "name": "Modern Warfare 4",
+      "version": "1.13.0-Release",
+      "url": "https://github.com/Skydeps1459/Modern-Warfare-4-TACZ-GunPack/releases/download/v1.13.0-Release/Modern.Warfare.4-1.13.0-Release.zip",
+      "page": "https://github.com/Skydeps1459/Modern-Warfare-4-TACZ-GunPack/releases/latest",
+      "size": 86812599,
+      "sha256": "d58a340892f73a604cc973af873acaf3cad244d3ad1f91b6957284d750aad7f1"
+    }
+  ]
+}
