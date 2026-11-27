@@ -1,9 +1,7 @@
 package com.liokasanovich.gun_management.client.gui;
 
-import com.liokasanovich.gun_management.Config;
 import com.liokasanovich.gun_management.client.gui.widget.GunpackListWidget;
 import com.liokasanovich.gun_management.client.texture.PackIconCache;
-import com.liokasanovich.gun_management.core.CurseForgeClient;
 import com.liokasanovich.gun_management.core.GitHubClient;
 import com.liokasanovich.gun_management.core.GunpackInfo;
 import com.liokasanovich.gun_management.core.GunpackOperator;
@@ -42,32 +40,26 @@ public class GunpackManagerScreen extends Screen {
 
     private enum OnlineSource {
         MODRINTH,
-        GITHUB,
-        CURSEFORGE
+        GITHUB
     }
 
     private record OnlineEntry(
             @Nullable ModrinthClient.ModrinthProject modrinth,
-            @Nullable GitHubClient.GitHubRepo github,
-            @Nullable CurseForgeClient.CurseForgeProject curseforge
+            @Nullable GitHubClient.GitHubRepo github
     ) {
         String title() {
-            if (modrinth != null) return modrinth.title();
-            if (github != null) return github.name();
-            return curseforge.name();
+            return modrinth != null ? modrinth.title() : github.name();
         }
 
         String subtitle() {
-            if (modrinth != null) return modrinth.author() + " | " + modrinth.downloads() + " DL";
-            if (github != null) return github.owner() + " | ★ " + github.stars();
-            return curseforge.author() + " | " + curseforge.downloads() + " DL";
+            return modrinth != null
+                    ? modrinth.author() + " | " + modrinth.downloads() + " DL"
+                    : github.owner() + " | ★ " + github.stars();
         }
 
         @Nullable
         String iconUrl() {
-            if (modrinth != null) return modrinth.iconUrl();
-            if (github != null) return github.avatarUrl();
-            return curseforge.iconUrl();
+            return modrinth != null ? modrinth.iconUrl() : github.avatarUrl();
         }
     }
 
@@ -207,11 +199,9 @@ public class GunpackManagerScreen extends Screen {
         int searchWidth = Math.max(100, this.width - searchX - rightReserve);
         onlineSearchBox = new EditBox(this.font, searchX, topY, searchWidth, 20,
                 Component.translatable("gui.gun_management.search"));
-        onlineSearchBox.setHint(switch (onlineSource) {
-            case GITHUB -> Component.translatable("gui.gun_management.search_github_hint");
-            case CURSEFORGE -> Component.translatable("gui.gun_management.search_curseforge_hint");
-            case MODRINTH -> Component.translatable("gui.gun_management.search_online_hint");
-        });
+        onlineSearchBox.setHint(onlineSource == OnlineSource.GITHUB
+                ? Component.translatable("gui.gun_management.search_github_hint")
+                : Component.translatable("gui.gun_management.search_online_hint"));
         addRenderableWidget(onlineSearchBox);
 
         addRenderableWidget(Button.builder(Component.translatable("gui.gun_management.search_btn"), b -> searchOnline())
@@ -245,16 +235,13 @@ public class GunpackManagerScreen extends Screen {
     }
 
     private Component sourceLabel() {
-        return switch (onlineSource) {
-            case MODRINTH -> Component.translatable("gui.gun_management.source.modrinth");
-            case GITHUB -> Component.translatable("gui.gun_management.source.github");
-            case CURSEFORGE -> Component.translatable("gui.gun_management.source.curseforge");
-        };
+        return onlineSource == OnlineSource.MODRINTH
+                ? Component.translatable("gui.gun_management.source.modrinth")
+                : Component.translatable("gui.gun_management.source.github");
     }
 
     private void toggleOnlineSource() {
-        OnlineSource[] vals = OnlineSource.values();
-        onlineSource = vals[(onlineSource.ordinal() + 1) % vals.length];
+        onlineSource = (onlineSource == OnlineSource.MODRINTH) ? OnlineSource.GITHUB : OnlineSource.MODRINTH;
         onlineEntries = List.of();
         selectedOnline = null;
         statusMessage = "";
@@ -366,20 +353,13 @@ public class GunpackManagerScreen extends Screen {
             ModrinthClient.searchGunpacksAsync(query, 40, 0).whenComplete((projects, err) ->
                     Minecraft.getInstance().execute(() -> handleSearchResult(
                             projects == null ? List.of() : projects.stream()
-                                    .map(p -> new OnlineEntry(p, null, null)).toList(),
+                                    .map(p -> new OnlineEntry(p, null)).toList(),
                             err)));
-        } else if (onlineSource == OnlineSource.GITHUB) {
+        } else {
             GitHubClient.searchTaczReposAsync(query, 25).whenComplete((repos, err) ->
                     Minecraft.getInstance().execute(() -> handleSearchResult(
                             repos == null ? List.of() : repos.stream()
-                                    .map(r -> new OnlineEntry(null, r, null)).toList(),
-                            err)));
-        } else {
-            String apiKey = Config.CURSEFORGE_API_KEY.get();
-            CurseForgeClient.searchGunpacksAsync(query, apiKey, 25).whenComplete((projects, err) ->
-                    Minecraft.getInstance().execute(() -> handleSearchResult(
-                            projects == null ? List.of() : projects.stream()
-                                    .map(c -> new OnlineEntry(null, null, c)).toList(),
+                                    .map(r -> new OnlineEntry(null, r)).toList(),
                             err)));
         }
     }
@@ -388,11 +368,7 @@ public class GunpackManagerScreen extends Screen {
         onlineSearching = false;
         if (err != null) {
             Throwable cause = err.getCause() != null ? err.getCause() : err;
-            if ("MISSING_API_KEY".equals(cause.getMessage())) {
-                this.statusMessage = Component.translatable("gui.gun_management.curseforge.missing_key").getString();
-            } else {
-                this.statusMessage = "Search error: " + cause.getMessage();
-            }
+            this.statusMessage = "Search error: " + cause.getMessage();
             return;
         }
         this.onlineEntries = entries;
@@ -427,26 +403,7 @@ public class GunpackManagerScreen extends Screen {
             installModrinthProject(selectedOnline.modrinth());
         } else if (selectedOnline.github() != null) {
             installGitHubRepo(selectedOnline.github());
-        } else if (selectedOnline.curseforge() != null) {
-            installCurseForgeProject(selectedOnline.curseforge());
         }
-    }
-
-    private void installCurseForgeProject(CurseForgeClient.CurseForgeProject project) {
-        String apiKey = Config.CURSEFORGE_API_KEY.get();
-        downloading = true;
-        updateInstallButton();
-        this.statusMessage = Component.translatable("gui.gun_management.resolving", project.name()).getString();
-
-        CurseForgeClient.getLatestZipFileAsync(project.id(), apiKey, "1.20.1")
-                .thenCompose(optFile -> {
-                    if (optFile.isEmpty()) {
-                        throw new RuntimeException("No .zip gunpack file found for " + project.name());
-                    }
-                    return CurseForgeClient.downloadAndInstallAsync(optFile.get(), GunpackPaths.getTaczDir(),
-                            (done, total) -> updateDownloadProgress(project.name(), done, total));
-                })
-                .whenComplete((path, err) -> finishInstall(path, err));
     }
 
     private void installModrinthProject(ModrinthClient.ModrinthProject project) {
@@ -562,10 +519,6 @@ public class GunpackManagerScreen extends Screen {
         if (selectedOnline.modrinth() != null) {
             graphics.drawWordWrap(this.font,
                     Component.literal(selectedOnline.modrinth().description()),
-                    drawerX + 8, y, drawerW - 16, 0xCCCCCC);
-        } else if (selectedOnline.curseforge() != null) {
-            graphics.drawWordWrap(this.font,
-                    Component.literal(selectedOnline.curseforge().summary()),
                     drawerX + 8, y, drawerW - 16, 0xCCCCCC);
         } else if (selectedOnline.github() != null) {
             GitHubClient.RepoDetails details = githubDetailsCache.get(selectedOnline.github().fullName());
