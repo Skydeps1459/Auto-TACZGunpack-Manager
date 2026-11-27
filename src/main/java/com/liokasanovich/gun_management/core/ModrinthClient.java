@@ -85,7 +85,7 @@ public final class ModrinthClient {
         String effectiveQuery = (query == null || query.isBlank()) ? "tacz" : query.trim();
         String encodedQuery = URLEncoder.encode(effectiveQuery, StandardCharsets.UTF_8);
         String encodedFacets = URLEncoder.encode(
-                "[[\"versions:1.21.1\"],[\"project_type:datapack\",\"project_type:resourcepack\"]]",
+                "[[\"versions:1.20.1\"],[\"project_type:datapack\",\"project_type:resourcepack\"]]",
                 StandardCharsets.UTF_8);
         String url = API_BASE + "/search?query=" + encodedQuery + "&facets=" + encodedFacets
                 + "&limit=" + limit + "&offset=" + offset;
@@ -124,7 +124,7 @@ public final class ModrinthClient {
     }
 
     public static CompletableFuture<Optional<ModrinthVersion>> getLatestCompatibleVersionAsync(String projectId) {
-        String encodedGameVersions = URLEncoder.encode("[\"1.21.1\"]", StandardCharsets.UTF_8);
+        String encodedGameVersions = URLEncoder.encode("[\"1.20.1\"]", StandardCharsets.UTF_8);
         String url = API_BASE + "/project/" + URLEncoder.encode(projectId, StandardCharsets.UTF_8)
                 + "/version?game_versions=" + encodedGameVersions;
 

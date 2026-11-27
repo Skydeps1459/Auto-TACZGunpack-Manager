@@ -6,50 +6,72 @@ import com.liokasanovich.gun_management.core.GunpackOperator;
 import com.liokasanovich.gun_management.core.GunpackPaths;
 import com.liokasanovich.gun_management.core.GunpackScanner;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
-import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.minecraftforge.network.NetworkDirection;
+import net.minecraftforge.network.NetworkEvent;
+import net.minecraftforge.network.NetworkRegistry;
+import net.minecraftforge.network.simple.SimpleChannel;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
- * Server-to-client payload carrying the server's active gunpack manifest (namespace + SHA-256).
+ * Server-to-client SimpleChannel packet carrying the server's active gunpack manifest (namespace + SHA-256).
  */
-public record PacketSyncGunpacks(List<PackEntry> packs) implements CustomPacketPayload {
-    public static final Type<PacketSyncGunpacks> TYPE = new Type<>(
-            ResourceLocation.fromNamespaceAndPath(GunManagement.MODID, "sync_gunpacks"));
-
-    public record PackEntry(String namespace, String displayName, String sha256) {
-        public static final StreamCodec<FriendlyByteBuf, PackEntry> STREAM_CODEC = StreamCodec.composite(
-                ByteBufCodecs.STRING_UTF8, PackEntry::namespace,
-                ByteBufCodecs.STRING_UTF8, PackEntry::displayName,
-                ByteBufCodecs.STRING_UTF8, PackEntry::sha256,
-                PackEntry::new
-        );
-    }
-
-    public static final StreamCodec<FriendlyByteBuf, PacketSyncGunpacks> STREAM_CODEC = StreamCodec.composite(
-            PackEntry.STREAM_CODEC.apply(ByteBufCodecs.list()), PacketSyncGunpacks::packs,
-            PacketSyncGunpacks::new
+public record PacketSyncGunpacks(List<PackEntry> packs) {
+    private static final String PROTOCOL_VERSION = "1";
+    public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
+            new ResourceLocation(GunManagement.MODID, "main"),
+            () -> PROTOCOL_VERSION,
+            PROTOCOL_VERSION::equals,
+            PROTOCOL_VERSION::equals
     );
 
-    @Override
-    public Type<? extends CustomPacketPayload> type() {
-        return TYPE;
-    }
-
-    public static void handleClient(PacketSyncGunpacks payload, IPayloadContext context) {
-        context.enqueueWork(() -> ClientSyncBridge.handleSync(payload));
+    public record PackEntry(String namespace, String displayName, String sha256) {
     }
 
     public record MismatchEntry(PackEntry serverPack, boolean hashMismatch) {
+    }
+
+    public static void register() {
+        CHANNEL.registerMessage(
+                0,
+                PacketSyncGunpacks.class,
+                PacketSyncGunpacks::encode,
+                PacketSyncGunpacks::decode,
+                PacketSyncGunpacks::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+    }
+
+    public static void encode(PacketSyncGunpacks msg, FriendlyByteBuf buf) {
+        buf.writeVarInt(msg.packs().size());
+        for (PackEntry entry : msg.packs()) {
+            buf.writeUtf(entry.namespace());
+            buf.writeUtf(entry.displayName());
+            buf.writeUtf(entry.sha256());
+        }
+    }
+
+    public static PacketSyncGunpacks decode(FriendlyByteBuf buf) {
+        int size = buf.readVarInt();
+        List<PackEntry> list = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            list.add(new PackEntry(buf.readUtf(), buf.readUtf(), buf.readUtf()));
+        }
+        return new PacketSyncGunpacks(list);
+    }
+
+    public static void handle(PacketSyncGunpacks msg, Supplier<NetworkEvent.Context> ctxSupplier) {
+        NetworkEvent.Context ctx = ctxSupplier.get();
+        ctx.enqueueWork(() -> ClientSyncBridge.handleSync(msg));
+        ctx.setPacketHandled(true);
     }
 
     private static final class ClientSyncBridge {

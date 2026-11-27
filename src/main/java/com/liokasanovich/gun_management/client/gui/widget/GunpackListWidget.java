@@ -31,7 +31,7 @@ public class GunpackListWidget extends ObjectSelectionList<GunpackListWidget.Ent
             Consumer<GunpackInfo> onSelect,
             Consumer<GunpackInfo> onDoubleClick
     ) {
-        super(mc, width, height, y, itemHeight);
+        super(mc, width, height, y, y + height, itemHeight);
         this.onSelect = onSelect;
         this.onDoubleClick = onDoubleClick;
     }
@@ -50,7 +50,7 @@ public class GunpackListWidget extends ObjectSelectionList<GunpackListWidget.Ent
 
     @Override
     protected int getScrollbarPosition() {
-        return this.getX() + this.width - 6;
+        return this.x0 + this.width - 6;
     }
 
     public class Entry extends ObjectSelectionList.Entry<Entry> {

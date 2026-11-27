@@ -90,7 +90,7 @@ public final class PackIconCache {
             try (InputStream in = new ByteArrayInputStream(bytes)) {
                 NativeImage image = NativeImage.read(in);
                 DynamicTexture texture = new DynamicTexture(image);
-                ResourceLocation id = ResourceLocation.fromNamespaceAndPath(
+                ResourceLocation id = new ResourceLocation(
                         GunManagement.MODID, "pack_icon_" + COUNTER.incrementAndGet());
                 Minecraft.getInstance().getTextureManager().register(id, texture);
                 CACHE.put(key, id);

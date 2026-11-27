@@ -116,13 +116,13 @@ public class GunpackManagerScreen extends Screen {
         disabledList = new GunpackListWidget(this.minecraft, colWidth, listHeight, listTop, 38,
                 pack -> updateTransferButtons(),
                 pack -> togglePack(pack, true));
-        disabledList.setX(leftX);
+        disabledList.setLeftPos(leftX);
         addRenderableWidget(disabledList);
 
         enabledList = new GunpackListWidget(this.minecraft, colWidth, listHeight, listTop, 38,
                 pack -> updateTransferButtons(),
                 pack -> togglePack(pack, false));
-        enabledList.setX(rightX);
+        enabledList.setLeftPos(rightX);
         addRenderableWidget(enabledList);
 
         int midX = leftX + colWidth + 6;
@@ -178,7 +178,7 @@ public class GunpackManagerScreen extends Screen {
 
         int leftWidth = Math.max(150, (int) (this.width * 0.52));
         onlineList = new ModrinthListWidget(this.minecraft, leftWidth, listHeight, listTop, 38);
-        onlineList.setX(16);
+        onlineList.setLeftPos(16);
         addRenderableWidget(onlineList);
         onlineList.setProjects(onlineProjects);
 
@@ -336,15 +336,16 @@ public class GunpackManagerScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        this.renderBackground(graphics);
         super.render(graphics, mouseX, mouseY, partialTick);
 
         if (currentTab == Tab.LOCAL && disabledList != null && enabledList != null) {
             graphics.drawString(this.font,
                     Component.translatable("gui.gun_management.disabled_header"),
-                    disabledList.getX(), disabledList.getY() - 10, 0xFFAAAA, false);
+                    disabledList.getLeft(), disabledList.getTop() - 10, 0xFFAAAA, false);
             graphics.drawString(this.font,
                     Component.translatable("gui.gun_management.enabled_header"),
-                    enabledList.getX(), enabledList.getY() - 10, 0xAAFFAA, false);
+                    enabledList.getLeft(), enabledList.getTop() - 10, 0xAAFFAA, false);
         } else if (currentTab == Tab.ONLINE && onlineList != null) {
             renderOnlineDrawer(graphics);
         }
@@ -357,10 +358,10 @@ public class GunpackManagerScreen extends Screen {
     }
 
     private void renderOnlineDrawer(GuiGraphics graphics) {
-        int drawerX = onlineList.getX() + onlineList.getWidth() + 12;
-        int drawerY = onlineList.getY();
+        int drawerX = onlineList.getLeft() + onlineList.getWidth() + 12;
+        int drawerY = onlineList.getTop();
         int drawerW = Math.max(120, this.width - drawerX - 16);
-        int drawerH = onlineList.getHeight();
+        int drawerH = onlineList.getBottom() - onlineList.getTop();
 
         graphics.fill(drawerX, drawerY, drawerX + drawerW, drawerY + drawerH, 0x66000000);
         if (selectedProject == null) {
@@ -397,7 +398,7 @@ public class GunpackManagerScreen extends Screen {
 
     private class ModrinthListWidget extends ObjectSelectionList<ModrinthListWidget.ProjectEntry> {
         public ModrinthListWidget(Minecraft mc, int width, int height, int y, int itemHeight) {
-            super(mc, width, height, y, itemHeight);
+            super(mc, width, height, y, y + height, itemHeight);
         }
 
         public void setProjects(List<ModrinthClient.ModrinthProject> projects) {
@@ -414,7 +415,7 @@ public class GunpackManagerScreen extends Screen {
 
         @Override
         protected int getScrollbarPosition() {
-            return this.getX() + this.width - 6;
+            return this.x0 + this.width - 6;
         }
 
         private class ProjectEntry extends ObjectSelectionList.Entry<ProjectEntry> {

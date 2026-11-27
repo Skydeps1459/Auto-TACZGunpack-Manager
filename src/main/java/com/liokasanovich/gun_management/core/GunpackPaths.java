@@ -1,6 +1,6 @@
 package com.liokasanovich.gun_management.core;
 
-import net.neoforged.fml.loading.FMLPaths;
+import net.minecraftforge.fml.loading.FMLPaths;
 
 import java.io.IOException;
 import java.nio.file.Files;

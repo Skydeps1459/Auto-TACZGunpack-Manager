@@ -8,17 +8,17 @@ import com.liokasanovich.gun_management.core.GunpackScanner;
 import com.liokasanovich.gun_management.network.PacketSyncGunpacks;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.bus.api.IEventBus;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.ModContainer;
-import net.neoforged.fml.common.Mod;
-import net.neoforged.fml.config.ModConfig;
-import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.event.entity.player.PlayerEvent;
-import net.neoforged.neoforge.network.PacketDistributor;
-import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
-import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.RegisterCommandsEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent;
+import net.minecraftforge.eventbus.api.IEventBus;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.ModLoadingContext;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.config.ModConfig;
+import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+import net.minecraftforge.network.PacketDistributor;
 import org.slf4j.Logger;
 
 @Mod(GunManagement.MODID)
@@ -26,21 +26,18 @@ public class GunManagement {
     public static final String MODID = "gun_management";
     public static final Logger LOGGER = LogUtils.getLogger();
 
-    public GunManagement(IEventBus modEventBus, ModContainer modContainer) {
+    public GunManagement() {
         GunpackOperator.applyPendingOperations();
 
-        NeoForge.EVENT_BUS.register(this);
-        modEventBus.addListener(this::registerPayloads);
-        modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
+        IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
+        modEventBus.addListener(this::commonSetup);
+
+        MinecraftForge.EVENT_BUS.register(this);
+        ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, Config.SPEC);
     }
 
-    private void registerPayloads(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar("1");
-        registrar.playToClient(
-                PacketSyncGunpacks.TYPE,
-                PacketSyncGunpacks.STREAM_CODEC,
-                PacketSyncGunpacks::handleClient
-        );
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(PacketSyncGunpacks::register);
     }
 
     @SubscribeEvent
@@ -57,7 +54,9 @@ public class GunManagement {
                     .toList();
             if (!entries.isEmpty()) {
                 serverPlayer.server.execute(() ->
-                        PacketDistributor.sendToPlayer(serverPlayer, new PacketSyncGunpacks(entries)));
+                        PacketSyncGunpacks.CHANNEL.send(
+                                PacketDistributor.PLAYER.with(() -> serverPlayer),
+                                new PacketSyncGunpacks(entries)));
             }
         });
     }
