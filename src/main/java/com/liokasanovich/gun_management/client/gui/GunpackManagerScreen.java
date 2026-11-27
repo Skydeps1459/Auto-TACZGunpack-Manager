@@ -87,6 +87,7 @@ public class GunpackManagerScreen extends Screen {
     private OnlineEntry selectedOnline;
     private final Map<String, GitHubClient.RepoDetails> githubDetailsCache = new ConcurrentHashMap<>();
     private boolean onlineSearching = false;
+    private int searchGeneration = 0;
     private boolean downloading = false;
     private String statusMessage = "";
 
@@ -242,6 +243,8 @@ public class GunpackManagerScreen extends Screen {
 
     private void toggleOnlineSource() {
         onlineSource = (onlineSource == OnlineSource.MODRINTH) ? OnlineSource.GITHUB : OnlineSource.MODRINTH;
+        searchGeneration++;
+        onlineSearching = false;
         onlineEntries = List.of();
         selectedOnline = null;
         statusMessage = "";
@@ -354,21 +357,33 @@ public class GunpackManagerScreen extends Screen {
             return;
         }
         onlineSearching = true;
+        final int gen = ++searchGeneration;
+        final OnlineSource activeSource = onlineSource;
         String query = onlineSearchBox != null ? onlineSearchBox.getValue() : "";
         this.statusMessage = Component.translatable("gui.gun_management.searching").getString();
 
-        if (onlineSource == OnlineSource.MODRINTH) {
-            ModrinthClient.searchGunpacksAsync(query, 40, 0).whenComplete((projects, err) ->
-                    Minecraft.getInstance().execute(() -> handleSearchResult(
-                            projects == null ? List.of() : projects.stream()
-                                    .map(p -> new OnlineEntry(p, null)).toList(),
-                            err)));
+        if (activeSource == OnlineSource.MODRINTH) {
+            ModrinthClient.searchGunpacksAsync(query, 100, 0).whenComplete((projects, err) ->
+                    Minecraft.getInstance().execute(() -> {
+                        if (gen != searchGeneration) {
+                            return;
+                        }
+                        handleSearchResult(
+                                projects == null ? List.of() : projects.stream()
+                                        .map(p -> new OnlineEntry(p, null)).toList(),
+                                err);
+                    }));
         } else {
-            GitHubClient.searchTaczReposAsync(query, 25).whenComplete((repos, err) ->
-                    Minecraft.getInstance().execute(() -> handleSearchResult(
-                            repos == null ? List.of() : repos.stream()
-                                    .map(r -> new OnlineEntry(null, r)).toList(),
-                            err)));
+            GitHubClient.searchTaczReposAsync(query, 50).whenComplete((repos, err) ->
+                    Minecraft.getInstance().execute(() -> {
+                        if (gen != searchGeneration) {
+                            return;
+                        }
+                        handleSearchResult(
+                                repos == null ? List.of() : repos.stream()
+                                        .map(r -> new OnlineEntry(null, r)).toList(),
+                                err);
+                    }));
         }
     }
 

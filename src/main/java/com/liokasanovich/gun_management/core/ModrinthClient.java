@@ -115,23 +115,31 @@ public final class ModrinthClient {
                 : (trimmed.toLowerCase(Locale.ROOT).contains("tacz") ? trimmed : "tacz " + trimmed);
         String sortIndex = isDefault ? "downloads" : "relevance";
 
-        // Scan up to 3 pages (300 hits) in batches of 100 and resolve all latest_version IDs
-        // via Modrinth's batch /v2/versions?ids=[...] endpoint (only 2 HTTP requests per 100 hits).
+        // Scan up to 5 pages (500 hits) in batches of 100 and also search "tacz gunpack" on default queries
+        // to maximize coverage, resolving latest_version IDs via /v2/versions?ids=[...].
         return CompletableFuture.supplyAsync(() -> {
-            List<ModrinthProject> verified = new ArrayList<>();
-            int maxPages = isDefault ? 3 : 2;
-            for (int page = 0; page < maxPages && verified.size() < limit; page++) {
+            Map<String, ModrinthProject> unique = new java.util.LinkedHashMap<>();
+            int maxPages = isDefault ? 5 : 3;
+            for (int page = 0; page < maxPages && unique.size() < limit; page++) {
                 int pageOffset = offset + page * 100;
                 List<ModrinthProject> pageHits = fetchSearchPage(effectiveQuery, sortIndex, 100, pageOffset);
                 if (pageHits.isEmpty()) {
                     break;
                 }
-                List<ModrinthProject> pageVerified = batchFilterZipProjects(pageHits);
-                verified.addAll(pageVerified);
+                for (ModrinthProject p : batchFilterZipProjects(pageHits)) {
+                    unique.putIfAbsent(p.projectId(), p);
+                }
                 if (pageHits.size() < 100) {
                     break;
                 }
             }
+            if (isDefault && unique.size() < limit) {
+                List<ModrinthProject> packHits = fetchSearchPage("tacz pack", "downloads", 100, 0);
+                for (ModrinthProject p : batchFilterZipProjects(packHits)) {
+                    unique.putIfAbsent(p.projectId(), p);
+                }
+            }
+            List<ModrinthProject> verified = new ArrayList<>(unique.values());
             if (verified.size() > limit) {
                 return List.copyOf(verified.subList(0, limit));
             }
@@ -234,11 +242,16 @@ public final class ModrinthClient {
         List<ModrinthProject> verified = new ArrayList<>();
         for (ModrinthProject p : candidates) {
             Optional<ModrinthVersion> cached = VERSION_CACHE.get(p.projectId());
-            if (cached != null && cached.isPresent()) {
+            if (cached != null && cached.isPresent() && hasPackKeyword(p.title(), p.description(), cached.get().fileName())) {
                 verified.add(p);
             }
         }
         return verified;
+    }
+
+    private static boolean hasPackKeyword(String title, String description, String fileName) {
+        String combined = (title + " " + description + " " + fileName).toLowerCase(Locale.ROOT);
+        return combined.contains("pack") || combined.contains("包");
     }
 
     public static CompletableFuture<Optional<ModrinthVersion>> getLatestCompatibleVersionAsync(String projectId) {

@@ -126,80 +126,107 @@ public final class GitHubClient {
 
     public static CompletableFuture<List<GitHubRepo>> searchTaczReposAsync(String query, int limit) {
         String trimmed = query == null ? "" : query.trim();
-        String q = trimmed.isEmpty()
-                ? "topic:tacz"
-                : "topic:tacz " + trimmed;
-        String encodedQ = URLEncoder.encode(q, StandardCharsets.UTF_8);
-        String url = API_BASE + "/search/repositories?q=" + encodedQ + "&sort=stars&order=desc&per_page=" + limit;
+        List<String> queries = trimmed.isEmpty()
+                ? List.of("topic:tacz", "tacz pack in:name,description,readme")
+                : List.of("topic:tacz " + trimmed, "tacz " + trimmed + " pack in:name,description");
 
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                .header("User-Agent", USER_AGENT)
-                .header("Accept", "application/vnd.github+json")
-                .timeout(Duration.ofSeconds(20))
-                .GET()
-                .build();
+        return CompletableFuture.supplyAsync(() -> {
+            java.util.Map<String, GitHubRepo> merged = new java.util.LinkedHashMap<>();
+            for (String q : queries) {
+                for (GitHubRepo repo : fetchGitHubSearchPage(q, 50)) {
+                    merged.putIfAbsent(repo.fullName(), repo);
+                }
+            }
+            List<GitHubRepo> candidates = new ArrayList<>(merged.values());
+            if (candidates.size() > 35) {
+                candidates = candidates.subList(0, 35);
+            }
 
-        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-                .thenCompose(resp -> {
-                    if (resp.statusCode() == 403) {
-                        throw new RuntimeException("GitHub API rate limit exceeded (HTTP 403). Try again later.");
-                    }
-                    if (resp.statusCode() != 200) {
-                        throw new RuntimeException("GitHub search failed with HTTP " + resp.statusCode());
-                    }
-                    JsonObject root = GSON.fromJson(resp.body(), JsonObject.class);
-                    List<GitHubRepo> candidates = new ArrayList<>();
-                    if (root != null && root.has("items") && root.get("items").isJsonArray()) {
-                        for (JsonElement el : root.getAsJsonArray("items")) {
-                            JsonObject obj = el.getAsJsonObject();
-                            String fullName = getString(obj, "full_name", "");
-                            String repoName = getString(obj, "name", "");
-                            if (isExcludedRepo(fullName, repoName)) {
-                                continue;
-                            }
-                            JsonObject ownerObj = obj.has("owner") && obj.get("owner").isJsonObject()
-                                    ? obj.getAsJsonObject("owner") : null;
-                            candidates.add(new GitHubRepo(
-                                    fullName,
-                                    repoName,
-                                    ownerObj != null ? getString(ownerObj, "login", "Unknown") : "Unknown",
-                                    getString(obj, "description", ""),
-                                    ownerObj != null ? getNullableString(ownerObj, "avatar_url") : null,
-                                    obj.has("stargazers_count") ? obj.get("stargazers_count").getAsInt() : 0,
-                                    getString(obj, "default_branch", "main"),
-                                    getString(obj, "html_url", "")
-                            ));
-                            if (candidates.size() >= Math.min(limit, 25)) {
-                                break;
-                            }
+            List<CompletableFuture<Optional<GitHubRepo>>> checks = candidates.stream()
+                    .map(repo -> {
+                        RepoDetails cached = DETAILS_CACHE.get(repo.fullName());
+                        if (cached != null) {
+                            boolean ok = !cached.zipAssets().isEmpty()
+                                    && hasPackKeyword(repo.name(), repo.description(), cached.zipAssets().get(0).fileName());
+                            return CompletableFuture.completedFuture(ok ? Optional.of(repo) : Optional.<GitHubRepo>empty());
                         }
+                        return findGunpackZipsAsync(repo)
+                                .thenApply(zips -> {
+                                    DETAILS_CACHE.putIfAbsent(repo.fullName(),
+                                            new RepoDetails(filterReadmeText(repo.description()), zips));
+                                    if (!zips.isEmpty() && hasPackKeyword(repo.name(), repo.description(), zips.get(0).fileName())) {
+                                        return Optional.of(repo);
+                                    }
+                                    return Optional.<GitHubRepo>empty();
+                                })
+                                .exceptionally(ex -> Optional.empty());
+                    })
+                    .toList();
+
+            CompletableFuture.allOf(checks.toArray(new CompletableFuture[0])).join();
+            return checks.stream()
+                    .map(CompletableFuture::join)
+                    .flatMap(Optional::stream)
+                    .limit(limit)
+                    .toList();
+        }, IO_EXECUTOR);
+    }
+
+    private static List<GitHubRepo> fetchGitHubSearchPage(String q, int perPage) {
+        try {
+            String encodedQ = URLEncoder.encode(q, StandardCharsets.UTF_8);
+            String url = API_BASE + "/search/repositories?q=" + encodedQ + "&sort=stars&order=desc&per_page=" + perPage;
+
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "application/vnd.github+json")
+                    .timeout(Duration.ofSeconds(20))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> resp = HTTP.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (resp.statusCode() == 403) {
+                throw new RuntimeException("GitHub API rate limit exceeded (HTTP 403). Try again later.");
+            }
+            if (resp.statusCode() != 200) {
+                throw new RuntimeException("GitHub search failed with HTTP " + resp.statusCode());
+            }
+            JsonObject root = GSON.fromJson(resp.body(), JsonObject.class);
+            List<GitHubRepo> list = new ArrayList<>();
+            if (root != null && root.has("items") && root.get("items").isJsonArray()) {
+                for (JsonElement el : root.getAsJsonArray("items")) {
+                    JsonObject obj = el.getAsJsonObject();
+                    String fullName = getString(obj, "full_name", "");
+                    String repoName = getString(obj, "name", "");
+                    if (isExcludedRepo(fullName, repoName)) {
+                        continue;
                     }
+                    JsonObject ownerObj = obj.has("owner") && obj.get("owner").isJsonObject()
+                            ? obj.getAsJsonObject("owner") : null;
+                    list.add(new GitHubRepo(
+                            fullName,
+                            repoName,
+                            ownerObj != null ? getString(ownerObj, "login", "Unknown") : "Unknown",
+                            getString(obj, "description", ""),
+                            ownerObj != null ? getNullableString(ownerObj, "avatar_url") : null,
+                            obj.has("stargazers_count") ? obj.get("stargazers_count").getAsInt() : 0,
+                            getString(obj, "default_branch", "main"),
+                            getString(obj, "html_url", "")
+                    ));
+                }
+            }
+            return list;
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException(e.getMessage(), e);
+        }
+    }
 
-                    // Only include repositories that actually contain at least one .zip gunpack (using cache first).
-                    List<CompletableFuture<Optional<GitHubRepo>>> checks = candidates.stream()
-                            .map(repo -> {
-                                RepoDetails cached = DETAILS_CACHE.get(repo.fullName());
-                                if (cached != null) {
-                                    return CompletableFuture.completedFuture(
-                                            cached.zipAssets().isEmpty() ? Optional.<GitHubRepo>empty() : Optional.of(repo));
-                                }
-                                return findGunpackZipsAsync(repo)
-                                        .thenApply(zips -> {
-                                            DETAILS_CACHE.putIfAbsent(repo.fullName(),
-                                                    new RepoDetails(filterReadmeText(repo.description()), zips));
-                                            return zips.isEmpty() ? Optional.<GitHubRepo>empty() : Optional.of(repo);
-                                        })
-                                        .exceptionally(ex -> Optional.empty());
-                            })
-                            .toList();
-
-                    return CompletableFuture.allOf(checks.toArray(new CompletableFuture[0]))
-                            .thenApply(v -> checks.stream()
-                                    .map(CompletableFuture::join)
-                                    .flatMap(Optional::stream)
-                                    .limit(limit)
-                                    .toList());
-                });
+    private static boolean hasPackKeyword(String title, String description, String fileName) {
+        String combined = (title + " " + description + " " + fileName).toLowerCase(Locale.ROOT);
+        return combined.contains("pack") || combined.contains("包");
     }
 
     public static CompletableFuture<RepoDetails> fetchRepoDetailsAsync(GitHubRepo repo) {
