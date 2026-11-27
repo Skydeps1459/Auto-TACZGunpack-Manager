@@ -198,11 +198,22 @@ public final class GunpackOperator {
     private static final class ClientReloadBridge {
         private static CompletableFuture<Void> reload() {
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-            if (mc.isSameThread()) {
-                com.tacz.guns.client.resource.ClientAssetsManager.reloadAllPack();
-                return CompletableFuture.completedFuture(null);
-            }
-            return mc.submit(com.tacz.guns.client.resource.ClientAssetsManager::reloadAllPack);
+            // Do NOT call ClientAssetsManager.reloadAllPack() on the render thread:
+            // it blocks on reloadResourcePacks().get() and deadlocks the render thread.
+            CompletableFuture<CompletableFuture<Void>> scheduled = new CompletableFuture<>();
+            mc.execute(() -> {
+                try {
+                    scheduled.complete(mc.reloadResourcePacks());
+                } catch (Throwable t) {
+                    scheduled.completeExceptionally(t);
+                }
+            });
+            return scheduled.thenCompose(f -> f).thenRun(() -> {
+                if (ServerLifecycleHooks.getCurrentServer() != null) {
+                    var server = ServerLifecycleHooks.getCurrentServer();
+                    server.submit(CommonAssetsManager::reloadAllPack).join();
+                }
+            });
         }
     }
 

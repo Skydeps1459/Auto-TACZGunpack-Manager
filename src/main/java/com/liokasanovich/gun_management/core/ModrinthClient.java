@@ -75,7 +75,9 @@ public final class ModrinthClient {
     public static CompletableFuture<List<ModrinthProject>> searchGunpacksAsync(String query, int limit, int offset) {
         String effectiveQuery = (query == null || query.isBlank()) ? "tacz" : query.trim();
         String encodedQuery = URLEncoder.encode(effectiveQuery, StandardCharsets.UTF_8);
-        String encodedFacets = URLEncoder.encode("[[\"versions:1.21.1\"]]", StandardCharsets.UTF_8);
+        String encodedFacets = URLEncoder.encode(
+                "[[\"versions:1.21.1\"],[\"project_type:datapack\",\"project_type:resourcepack\"]]",
+                StandardCharsets.UTF_8);
         String url = API_BASE + "/search?query=" + encodedQuery + "&facets=" + encodedFacets
                 + "&limit=" + limit + "&offset=" + offset;
 
@@ -253,6 +255,10 @@ public final class ModrinthClient {
         JsonObject chosenFile = null;
         for (JsonElement fEl : files) {
             JsonObject f = fEl.getAsJsonObject();
+            String name = getString(f, "filename", "");
+            if (!name.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) {
+                continue;
+            }
             if (f.has("primary") && f.get("primary").getAsBoolean()) {
                 chosenFile = f;
                 break;
